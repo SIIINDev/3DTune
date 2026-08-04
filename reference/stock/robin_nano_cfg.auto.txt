@@ -1,0 +1,273 @@
+################# MKS Robin nano configuration #######################
+#This option is only used in factory testing
+>cfg_hardware_test_enable 0 #hardware test enable.
+
+#====================Advanced function settings=======================================
+>cfg_insert_det_module 0 #Access the power failure detection module (1:mks 220det;0:mks pwc)
+>cfg_have_ups_device 0 #Whether the machine is equipped with UPS power supply (1: yes; 0: no)
+>cfg_print_over_auto_close 1 #Complete the shutdown configuration (1: open; 0: close). It needs to be used with the "shutdown module"
+
+>cfg_filament_det0_trigger_level 0 #E0 Trigger level configuration of the disconnection detection interface (1: high level trigger; 0: low level trigger)
+
+>cfg_filament_det1_trigger_level 0 #E1 trigger level configuration of material break detection interface (1: high level trigger; 0: low level trigger)
+
+>cfg_filament_load_length 100 #The length of the "refill" feed
+>cfg_filament_load_speed 800 #"Change material" feed speed configuration (mm/min)
+>cfg_filament_load_limit_temperature 200 #"Refueling" minimum limit temperature configuration for feeding
+>cfg_filament_unload_length 100 #The length of the unloaded material of "reload"
+>cfg_filament_unload_speed 800 # "Return" unload speed configuration (mm/min)
+>cfg_filament_unload_limit_temperature 200 #Configuration of the minimum limit temperature for "refill" unloading
+
+#============================ Leveling button configuration ==============================
+
+>cfg_leveling_mode 1 #Leveling mode configuration "1: automatic leveling; 0: manual leveling"
+
+#============================ Manual Leveling ==================================
+
+>cfg_point_number 5 #Number of manual leveling: (3,4,5 points can be set)
+>cfg_point1:20,20
+>cfg_point2:280,20
+>cfg_point3:280,280 #Position coordinates of 5 points during manual leveling
+>cfg_point4:20,280
+>cfg_point5:150,150
+
+#============================ Auto Leveling ====================================
+
+>cfg_auto_leveling_cmd:G28;G29;
+
+#====================Language setting===========================================
+>cfg_language_adjust_type 1 #Configuration of language switching mode (1: screen button to switch language, 0: configuration file option to switch language).
+
+>cfg_language_type 3 #language (1: Simplified Chinese; 2: German; 3: English; 4: Russian; 5: Japanese, 6: French, 7: Italian, 8: Spanish), #This configuration is only valid when cfg_multiple_language is set to 0.
+
+#==================Customize function button customization===================================
+#Set interface customization function 1
+>setmenu_func1_display 1 #1: show button, 0: don't show button
+
+#Each instruction must be separated by a semicolon ";"
+>setmenu_func1:M84;
+
+>moreitem_pic_cnt 0 #Number of "more" buttons
+
+#Button1~Button7 custom command
+#Each instruction must be separated by a semicolon ";"
+#The maximum size of each button setting command must be less than 200 bytes
+>moreitem_button1_cmd:G28 X0;G28 Y0;G28 Z0;
+>moreitem_button2_cmd:G28 X0;G28 Y0;G28 Z0;
+>moreitem_button3_cmd:G28 X0;G28 Y0;G28 Z0;
+>moreitem_button4_cmd:G28 X0;G28 Y0;G28 Z0;
+>moreitem_button5_cmd:G28 X0;G28 Y0;G28 Z0;
+>moreitem_button6_cmd:G28 X0;G28 Y0;G28 Z0;
+>moreitem_button7_cmd:G28 X0;G28 Y0;G28 Z0;
+
+#Print the number of "more" buttons in the interface
+>morefunc_cnt 0
+
+#Button 1~Button 6 function configuration
+>morefunc1_cmd:G28;
+>morefunc2_cmd:G28;
+>morefunc3_cmd:G28;
+>morefunc4_cmd:G28;
+>morefunc5_cmd:G28;
+
+#------------------------------------------------- ------------
+######## Display effect customization (please refer to the manual for button and LOGO customization) ##########
+
+>cfg_background_color 0x000000 #Screen background color
+>cfg_title_color 0xFFFFFF #title text
+>cfg_state_bkcolor 0x000000 #Status bar background color
+>cfg_state_textcolor 0xFFFFFF #Status bar font color
+>cfg_filename_bkcolor 0x494949 #file directory button background color
+>cfg_filename_textcolor 0xFFFFFF #File directory button font color
+>cfg_btn_bkcolor 0x494949 #General button background color
+>cfg_btn_textcolor 0xFFFFFF #General button text color
+>cfg_state_btn_bkcolor 0x494949 #Status button background color
+>cfg_state_btn_textcolor 0xFFFFFF #State button font color
+>cfg_back_btn_bkcolor 0x494949 #"Back" key background color
+>cfg_back_btn_textcolor 0xFFFFFF #"Back" key font color
+>cfg_sel_btn_bkcolor 0x494949 #Selected button background color
+>cfg_sel_btn_textcolor 0xFFFFFF #selected button font color
+>cfg_dialog_btn_bkcolor 0xff0000 #Dialog button background color
+>cfg_dialog_btn_textcolor 0xFFFFFF #Dialog button font color
+>cfg_btn_text_offset 5 #Button font offset bottom position (unit: pixel)
+>cfg_screen_display_mode 0 #Screen homepage display mode (0: classic mode, 1: simple mode)
+
+#============================== Basic Settings ==========================
+
+>MACHINETPYE 0 #Model setting, 0: Cartesian; 1: DELTA ; 2: COREXY
+>HAS_TEMP_BED 1 #Open the hot bed (1: enable, 0: disable)
+>EXTRUDERS 1 #Configure the number of extrusion heads
+>Z2_STEPPER_DRIVERS 0 #Enable double Z function, 1: enable; 0: disable
+
+# XYZ axis travel (unit: mm)
+>X_MIN_POS 0
+>Y_MIN_POS 0
+>Z_MIN_POS 0
+>X_MAX_POS 300
+>Y_MAX_POS 300
+>Z_MAX_POS 330
+
+# Stop position of extrusion head after pause
+>FILAMENT_CHANGE_X_POS 5 # X position (absolute coordinate value)
+>FILAMENT_CHANGE_Y_POS 5 # Y position (absolute coordinate value)
+>FILAMENT_CHANGE_Z_ADD 5 # Z position (relative coordinate value)
+
+#When using dual heads, the XY offset value of the second extrusion head and the first extrusion.
+>HOTEND_OFFSET_X 20.00 #x axis offset (unit: mm)
+>HOTEND_OFFSET_Y 5.00 #y-axis offset (unit: mm)
+#============================== Stepper Motor Settings ============================
+#Motor direction configuration.
+>INVERT_X_DIR 0
+>INVERT_Y_DIR 1
+>INVERT_Z_DIR 0
+>INVERT_E0_DIR 0
+>INVERT_E1_DIR 0
+
+#Move parameter settings
+>DEFAULT_X_STEPS_PER_UNIT 160 #X-axis default pulse (steps/mm)
+>DEFAULT_Y_STEPS_PER_UNIT 160 #Y-axis default pulse (steps/mm)
+>DEFAULT_Z_STEPS_PER_UNIT 800 #Z axis default pulse (steps/mm)
+>DEFAULT_E0_STEPS_PER_UNIT 768 #E-axis default pulse (steps/mm)
+>DEFAULT_E1_STEPS_PER_UNIT 90 #E-axis default pulse (steps/mm)
+
+>DEFAULT_X_MAX_FEEDRATE 300 #X-axis default speed (mm/s)
+>DEFAULT_Y_MAX_FEEDRATE 300 #Y-axis default speed (mm/s)
+>DEFAULT_Z_MAX_FEEDRATE 6 #Z axis default speed (mm/s)
+>DEFAULT_E0_MAX_FEEDRATE 100 #E-axis default speed (mm/s)
+>DEFAULT_E1_MAX_FEEDRATE 100 #E-axis default speed (mm/s)
+
+>DEFAULT_X_MAX_ACCELERATION 1000 #X-axis default maximum acceleration (change/s) change = mm/s
+>DEFAULT_Y_MAX_ACCELERATION 1000 #Y-axis default maximum acceleration (change/s) change = mm/s
+>DEFAULT_Z_MAX_ACCELERATION 100 #Z-axis default maximum acceleration (change/s) change = mm/s
+>DEFAULT_E0_MAX_ACCELERATION 1000 #E-axis default maximum acceleration (change/s) change = mm/s
+>DEFAULT_E1_MAX_ACCELERATION 1000 #E-axis default maximum acceleration (change/s) change = mm/s
+
+>DEFAULT_ACCELERATION 1000 #X,Y,Z,E Default acceleration when printing
+>DEFAULT_RETRACT_ACCELERATION 1000 #X,Y,Z,E Retract default acceleration
+>DEFAULT_TRAVEL_ACCELERATION 1000 #X,Y,Z default acceleration when not printing
+>DEFAULT_MINIMUMFEEDRATE 0.0 #Default minimum speed
+>DEFAULT_MINSEGMENTTIME 20000 #When the cache is empty, the minimum time required for a move (unit ms).
+>DEFAULT_MINTRAVELFEEDRATE 0.0 #
+
+>DEFAULT_XJERK 10.0 #Default X axis Jerk (mm/s)
+>DEFAULT_YJERK 10.0 #Default Y axis Jerk (mm/s)
+>DEFAULT_ZJERK 0.4 #Default Z axis Jerk (mm/s)
+>DEFAULT_EJERK 3.0 #Default E-axis Jerk (mm/s)
+
+#For Inverting Stepper Enable Pins (0:Low,1:High)
+>X_ENABLE_ON 0
+>Y_ENABLE_ON 0
+>Z_ENABLE_ON 0
+>E_ENABLE_ON 0
+
+#============================== Thermal setting ============================
+>TEMP_SENSOR_0 1 #1: 100k thermal; -3: MAX31855 thermocouple
+>EXTRUDE_MINTEMP 170 #When printing, the minimum temperature of the extruder (for protection)
+>HEATER_0_MINTEMP 5 #Extrude 0 minimum temperature value
+>HEATER_0_MAXTEMP 275 #Extrude 0 maximum temperature value
+>HEATER_1_MINTEMP 5 #Extrude 1 minimum temperature value
+>HEATER_1_MAXTEMP 275 #Extrude 1 maximum temperature value
+>BED_MAXTEMP 150 #The maximum temperature of the hot bed
+
+#======================== Thermal Protection Configuration =======================
+> THERMAL_PROTECTION_PERIOD 45 #Unit: second; when the machine frequently appears Err7, the current value can be appropriately increased;
+
+> THERMAL_PROTECTION_HYSTERESIS 5 #Unit:℃
+>WATCH_TEMP_PERIOD 45 #Unit: second; when Err5 occurs frequently on the machine, the current value can be appropriately increased
+
+>WATCH_TEMP_INCREASE 2 #Unit:℃
+> THERMAL_PROTECTION_BED_PERIOD 45 #Unit: second; when the machine frequently appears Err7, the current value can be appropriately increased
+
+> THERMAL_PROTECTION_BED_HYSTERESIS 5 #Unit:℃
+>WATCH_BED_TEMP_PERIOD 45 #Unit: second; when Err6 occurs frequently on the machine, the current value can be appropriately increased
+
+>WATCH_BED_TEMP_INCREASE 2 #Unit:℃
+
+# Extrusion head temperature control parameter settings.
+>PIDTEMPE 1 # Mode selection, 1:PID; 0:bang-bang
+>DEFAULT_Kp 24 # P value setting
+>DEFAULT_Ki 0.88 # I value setting
+>DEFAULT_Kd 80 # D value setting
+
+#Hot bed temperature control parameter setting..
+>PIDTEMPBED 0 # Mode selection, 1:PID; 0:bang-bang
+>DEFAULT_bedKp 10.00 # P value setting
+>DEFAULT_bedKi 0.023 # I value setting
+>DEFAULT_bedKd 305.4 # D value setting
+
+#============================== Limit switch settings ==========================
+
+>MIN_SOFTWARE_ENDSTOPS 1 # 0: Disable software limit; 1: Enable software limit.
+>MAX_SOFTWARE_ENDSTOPS 1 # 0: Disable software limit; 1: Enable software limit.
+
+# Configure the access signal of the limit switch.
+>X_MIN_ENDSTOP_INVERTING 1 # X_MIN limit switch normally open/normally closed selection
+>Y_MIN_ENDSTOP_INVERTING 1 # Y_MIN limit switch normally open/normally closed selection
+>Z_MIN_ENDSTOP_INVERTING 1 # Z_MIN limit switch normally open/normally closed selection
+>X_MAX_ENDSTOP_INVERTING 0 # X_MAX limit switch normally open/normally closed selection
+>Y_MAX_ENDSTOP_INVERTING 0 # Y_MAX limit switch normally open/normally closed selection
+>Z_MAX_ENDSTOP_INVERTING 0 # Z_MAX limit switch normally open/normally closed selection
+>Z_MIN_PROBE_ENDSTOP_INVERTING 1 # Z_PROBE limit switch normally open/normally closed setting.
+>FIL_RUNOUT_INVERTING 0 # Normally open/normally closed selection of material break switch
+
+# Indicate the interface used by the limit switch or probe.
+>USE_XMIN_PLUG 1 # 1: use; 0: do not use
+>USE_YMIN_PLUG 1 # 1: use; 0: do not use
+>USE_ZMIN_PLUG 1 # 1: use; 0: do not use
+>USE_XMAX_PLUG 0 # 1: use; 0: do not use
+>USE_YMAX_PLUG 0 # 1: use; 0: do not use
+>USE_ZMAX_PLUG 1 # 1: use; 0: do not use
+
+#============================== Return to zero setting ==============================
+
+>X_HOME_DIR -1 # X-axis homing direction; 1=MAX direction, -1=MIN direction :[-1,1]
+>Y_HOME_DIR -1 # Y-axis zero return direction; 1=MAX direction, -1=MIN direction :[-1,1]
+>Z_HOME_DIR -1 # Z-axis zero return direction; 1=MAX direction, -1=MIN direction :[-1,1]
+>HOMING_FEEDRATE_XY 2400 # XY axis return speed (mm/m)
+>HOMING_FEEDRATE_Z 600 # Z-axis zero return speed (mm/m)
+>HOME_Y_BEFORE_X 0 # The order of the xy axis when returning to zero, 0: X returns to zero first; 1: Y returns to zero first;
+
+
+#============================== Z-axis probe settings ============================
+#Probe interface Z-Min or Z-Max.
+>Z_MIN_PROBE_PIN_MODE 2 # 0: not used; 1: connected to Z_MIN; 2: connected to ZMAX
+
+>Z_PROBE_OFFSET_FROM_EXTRUDER 0 # Z offset: -below +above [the nozzle]
+>X_PROBE_OFFSET_FROM_EXTRUDER 27 # X offset: -left +right [of the nozzle]
+>Y_PROBE_OFFSET_FROM_EXTRUDER -6 # Y offset: -front +behind [the nozzle]
+>XY_PROBE_SPEED 4000 # Probe XY axis moving speed (mm/m)
+>Z_PROBE_SPEED_FAST 800 # Speed ​​for the first approach when double-probing (with PROBE_DOUBLE_TOUCH)
+>Z_PROBE_SPEED_SLOW 800 # Speed ​​for the "accurate" probe of each point
+
+
+#================================ Hot Bed Leveling Settings ==============================
+
+>BED_LEVELING_METHOD 3 # 0: Do not use leveling; 3: Multi-point automatic leveling; 5: Manual grid leveling
+>GRID_MAX_POINTS_X 4 # x-axis leveling points. <= 15
+>GRID_MAX_POINTS_Y 4 # The number of leveling points in the y-axis direction. <= 15
+>Z_CLEARANCE_DEPLOY_PROBE 10 # Z-axis lift/drop distance. > 0
+>Z_CLEARANCE_BETWEEN_PROBES 10 # The movement height of the Z axis at the two leveling points. > 0
+
+# Set the boundary distance that the probe can reach the hotbed.
+>LEFT_PROBE_BED_POSITION 5
+>RIGHT_PROBE_BED_POSITION 260
+>FRONT_PROBE_BED_POSITION 5
+>BACK_PROBE_BED_POSITION 260
+>MESH_INSET 20 # MESH_BED_LEVELING Boundary distance range in leveling mode
+
+#============================== Delta model setting ============================
+>DELTA_SEGMENTS_PER_SECOND 40 #--default
+>DELTA_DIAGONAL_ROD 346.75 #Center-to-center distance of the holes in the diagonal push rods.
+>DELTA_SMOOTH_ROD_OFFSET 211.5 #Horizontal offset from middle of printer to smooth rod center.
+>DELTA_EFFECTOR_OFFSET 28 #Horizontal offset of the universal joints on the end effector.
+>DELTA_CARRIAGE_OFFSET 14.5 #Horizontal offset of the universal joints on the carriages.
+>DELTA_RADIUS 169 #Horizontal distance bridged by diagonal push rods when effector is centered.
+>DELTA_HEIGHT 302 #height from z=0.00 to home position
+>DELTA_PRINTABLE_RADIUS 125 #Print surface diameter/2 minus unreachable space (avoid collisions with vertical towers).
+
+>DELTA_CALIBRATION_RADIUS 100 #set the radius for the calibration probe points - max 0.8 * DELTA_PRINTABLE_RADIUS
+
+#============================== Z-axis probe settings ==============================
+>BLTOUCH 1 # 0: disable BLTOUCH; 1: enable BLTOUCH
+
+#end.

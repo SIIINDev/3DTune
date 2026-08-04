@@ -1,0 +1,27 @@
+{
+  "name": "3dtune",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Host application for configuring and tuning Kingroon KP5L over USB, with LAN web access",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/index.ts",
+    "mock": "node src/index.ts --mock",
+    "mock:lan": "node src/index.ts --mock --host 0.0.0.0",
+    "mock:chaos": "node src/index.ts --mock --chaos",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test 'test/*.test.ts'"
+  },
+  "dependencies": {
+    "serialport": "^13.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/ws": "^8.5.13",
+    "typescript": "^5.7.0"
+  }
+}

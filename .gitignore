@@ -1,0 +1,13 @@
+node_modules/
+
+# Runtime config holds the LAN access token — never commit it
+.3dtune/
+*.local.json
+
+# Live discovery output from Phase 0 (machine-specific dumps)
+reference/live/
+
+*.log
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0d0d0d">
+<title>3DTune — Kingroon KP5L</title>
+<link rel="stylesheet" href="/style.css?v=__V__">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">3DTune</div>
+  <div class="status">
+    <span id="statusIcon" class="status-icon" data-state="disconnected" aria-hidden="true">•</span>
+    <span id="statusText" class="status-text">не подключено</span>
+  </div>
+  <div class="bar-right">
+    <span id="devices" class="devices"></span>
+    <button id="themeToggle" class="icon ghost" title="Светлая / тёмная тема" aria-label="Переключить тему">◐</button>
+    <button id="estop" class="danger estop">СТОП</button>
+  </div>
+</header>
+
+<div id="banners" class="banners"></div>
+
+<div class="filters">
+  <span class="filters-label">История температур</span>
+  <div class="seg" id="rangeSel" role="group" aria-label="Диапазон истории">
+    <button data-range="60000" aria-pressed="false">1 мин</button>
+    <button data-range="300000" aria-pressed="true">5 мин</button>
+    <button data-range="900000" aria-pressed="false">15 мин</button>
+    <button data-range="3600000" aria-pressed="false">60 мин</button>
+  </div>
+</div>
+
+<main>
+
+  <section class="card wide">
+    <h2>Температуры</h2>
+    <div class="tiles">
+      <div class="tile">
+        <div class="tile-label"><i class="key" data-series="hotend"></i>Сопло</div>
+        <div id="hotendValue" class="tile-value">—</div>
+        <div id="hotendSub" class="tile-sub">нагрев выключен</div>
+        <div class="meter" data-series="hotend"><i id="hotendPower"></i></div>
+      </div>
+      <div class="tile">
+        <div class="tile-label"><i class="key" data-series="bed"></i>Стол</div>
+        <div id="bedValue" class="tile-value">—</div>
+        <div id="bedSub" class="tile-sub">нагрев выключен</div>
+        <div class="meter" data-series="bed"><i id="bedPower"></i></div>
+      </div>
+    </div>
+
+    <div class="chart-wrap">
+      <canvas id="chart" role="img" aria-label="График температур сопла и стола"></canvas>
+      <div id="tooltip" class="tooltip" hidden></div>
+    </div>
+    <div class="legend">
+      <span><i class="key" data-series="hotend"></i>сопло</span>
+      <span><i class="key dashed" data-series="hotend"></i>цель сопла</span>
+      <span><i class="key" data-series="bed"></i>стол</span>
+      <span><i class="key dashed" data-series="bed"></i>цель стола</span>
+    </div>
+
+    <h3>Управление нагревом</h3>
+    <div class="row">
+      <label>Сопло °C <input id="hotendTarget" type="number" min="0" max="265" step="1" value="200"></label>
+      <button data-set="hotend" class="primary">Нагрев</button>
+      <button data-off="hotend" class="ghost">Выкл</button>
+      <span class="seg" data-presets="hotend" role="group" aria-label="Предустановки сопла">
+        <button data-t="185">185</button><button data-t="200">200</button>
+        <button data-t="215">215</button><button data-t="240">240</button>
+      </span>
+    </div>
+    <div class="row">
+      <label>Стол °C <input id="bedTarget" type="number" min="0" max="110" step="1" value="60"></label>
+      <button data-set="bed" class="primary">Нагрев</button>
+      <button data-off="bed" class="ghost">Выкл</button>
+      <span class="seg" data-presets="bed" role="group" aria-label="Предустановки стола">
+        <button data-t="50">50</button><button data-t="60">60</button>
+        <button data-t="80">80</button><button data-t="100">100</button>
+      </span>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Подключение</h2>
+    <div class="row">
+      <select id="portSelect" aria-label="Последовательный порт"></select>
+      <button id="refreshPorts" class="ghost mini">Обновить</button>
+    </div>
+    <div class="row">
+      <label>Baud <input id="baud" type="number" value="115200" step="1"></label>
+      <button id="connect" class="primary">Подключиться</button>
+      <button id="disconnect" class="ghost">Отключиться</button>
+    </div>
+    <dl class="kv">
+      <dt>Прошивка</dt><dd id="fwName">—</dd>
+      <dt>Машина</dt><dd id="fwMachine">—</dd>
+      <dt>Очередь</dt><dd id="queueDepth">0</dd>
+      <dt>Записей M500</dt><dd id="saveCount">0</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Движение</h2>
+    <div class="row">
+      <span class="muted small">шаг, мм</span>
+      <div class="seg" id="stepSel" role="group" aria-label="Шаг перемещения">
+        <button data-step="0.1" aria-pressed="false">0.1</button>
+        <button data-step="1" aria-pressed="true">1</button>
+        <button data-step="10" aria-pressed="false">10</button>
+        <button data-step="50" aria-pressed="false">50</button>
+      </div>
+    </div>
+    <div class="jog">
+      <button data-jog="Y" data-sign="1" class="j-up">Y+</button>
+      <button data-jog="X" data-sign="-1" class="j-left">X−</button>
+      <button data-home="XY" class="j-mid">⌂ XY</button>
+      <button data-jog="X" data-sign="1" class="j-right">X+</button>
+      <button data-jog="Y" data-sign="-1" class="j-down">Y−</button>
+      <button data-jog="Z" data-sign="1" class="j-zup">Z+</button>
+      <button data-home="Z" class="j-zmid">⌂ Z</button>
+      <button data-jog="Z" data-sign="-1" class="j-zdown">Z−</button>
+    </div>
+    <div class="row">
+      <button data-home="" class="primary">⌂ Home всё</button>
+      <button id="motorsOff" class="ghost">Моторы выкл</button>
+    </div>
+    <div class="row">
+      <button data-jog="E" data-sign="1" class="ghost">Подать E</button>
+      <button data-jog="E" data-sign="-1" class="ghost">Втянуть E</button>
+    </div>
+    <div class="row">
+      <label class="grow">Вентилятор <input id="fan" type="range" min="0" max="255" value="0"></label>
+      <span id="fanValue" class="small muted">0%</span>
+    </div>
+    <dl class="kv">
+      <dt>X</dt><dd id="posX">—</dd>
+      <dt>Y</dt><dd id="posY">—</dd>
+      <dt>Z</dt><dd id="posZ">—</dd>
+      <dt>Home</dt><dd id="homedState">—</dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <h2>Эндстопы <button id="readEndstops" class="ghost mini spacer">M119</button></h2>
+    <div id="endstops" class="chips"><span class="muted small">нет данных</span></div>
+  </section>
+
+  <section class="card" id="cardProbe">
+    <h2>Зонд и сетка стола</h2>
+    <p id="probeUnavailable" class="note" hidden>
+      Прошивка не сообщает о поддержке зонда (<code>Cap:Z_PROBE</code>). Включение 3D&nbsp;Touch —
+      параметр времени компиляции, по USB его не включить.
+    </p>
+    <div id="probeControls">
+      <div class="row">
+        <button data-gcode="M280 P0 S10" class="ghost mini">Выпустить щуп</button>
+        <button data-gcode="M280 P0 S90" class="ghost mini">Убрать щуп</button>
+        <button data-gcode="M280 P0 S120" class="ghost mini">Самотест</button>
+      </div>
+
+      <h3>Offset зонда (M851)</h3>
+      <div class="set-fields" id="probeOffsetFields"></div>
+      <div class="row" style="margin-top:8px">
+        <button id="applyProbeOffset" class="primary mini">Применить M851</button>
+      </div>
+
+      <h3>Живая подстройка Z (M290)</h3>
+      <p class="note">Крути на горячем сопле по «бумажке», затем зафиксируй в M851.</p>
+      <div class="row">
+        <button data-babystep="-0.05" class="ghost">−0.05</button>
+        <button data-babystep="-0.01" class="ghost">−0.01</button>
+        <button data-babystep="0.01" class="ghost">+0.01</button>
+        <button data-babystep="0.05" class="ghost">+0.05</button>
+      </div>
+      <div class="row">
+        <span class="small muted">накоплено: <span id="babystepSum">0.000</span> мм</span>
+        <button id="commitBabystep" class="primary mini">Зафиксировать в M851</button>
+      </div>
+
+      <h3>Сетка стола</h3>
+      <div class="row">
+        <button id="runG29" class="primary mini">G29 — снять сетку</button>
+        <button data-gcode="M420 S1" class="ghost mini">Включить</button>
+        <button data-gcode="M420 S0" class="ghost mini">Выключить</button>
+        <span id="levelingState" class="small muted"></span>
+      </div>
+      <div id="mesh" class="mesh"><span class="muted small">нет данных — выполни G29</span></div>
+      <div id="meshScale" class="scale" hidden>
+        <span id="meshMin">—</span>
+        <span class="scale-bar" aria-hidden="true"></span>
+        <span id="meshMax">—</span>
+      </div>
+      <p class="note" style="margin-top:8px">Синий — ниже плоскости, красный — выше. Значения в мм.</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>PID автотюн</h2>
+    <div class="row">
+      <div class="seg" id="pidTarget" role="group" aria-label="Цель автотюна">
+        <button data-target="hotend" aria-pressed="true">Сопло</button>
+        <button data-target="bed" aria-pressed="false">Стол</button>
+      </div>
+    </div>
+    <div class="row">
+      <label>°C <input id="pidTemp" type="number" value="210" min="40" max="265"></label>
+      <label>циклов <input id="pidCycles" type="number" value="8" min="3" max="15"></label>
+      <label><input id="pidApply" type="checkbox" checked> применить (U1)</label>
+    </div>
+    <div class="row">
+      <button id="pidRun" class="primary">Запустить</button>
+      <span id="pidStatus" class="small muted"></span>
+    </div>
+    <pre id="pidOut" class="out" aria-label="Вывод автотюна"></pre>
+  </section>
+
+  <section class="card wide">
+    <h2>Настройки прошивки
+      <button id="readSettings" class="ghost mini spacer">Прочитать M503</button>
+    </h2>
+    <p class="note">
+      EEPROM эмулируется во flash MCU: 2 КБ, ресурс ~10&nbsp;000 циклов стирания.
+      Меняй пачкой и жми «Сохранить» один раз — автосохранения здесь нет намеренно.
+    </p>
+    <div id="pending" class="pending" hidden>
+      <strong>Не применено</strong>
+      <ul id="pendingList"></ul>
+      <div class="row">
+        <button id="applySettings" class="primary mini">Применить</button>
+        <button id="revertSettings" class="ghost mini">Отменить</button>
+        <button id="saveEeprom" class="ghost mini">Применить и сохранить (M500)</button>
+      </div>
+    </div>
+    <div id="settings" class="settings"><span class="muted small">нет данных</span></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Терминал</h2>
+    <pre id="term" class="term" aria-label="Журнал обмена с принтером"></pre>
+    <form id="termForm" class="row">
+      <input id="termInput" class="grow" placeholder="M115" autocomplete="off" spellcheck="false" aria-label="G-code команда">
+      <button class="primary">Отправить</button>
+    </form>
+  </section>
+
+</main>
+
+<div id="toast" class="toast" hidden role="status" aria-live="polite"></div>
+
+<script type="module" src="/app.js?v=__V__"></script>
+</body>
+</html>
