@@ -1,0 +1,106 @@
+<!-- @dsCard group="Foundations" -->
+<style>
+  .ds {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0d0d0d; --raised: #242422;
+    --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --hair: rgba(255,255,255,.10); --s-bed: #3987e5; --s-hot: #d95926;
+    --st-warn: #fab219; --st-crit: #d03b3b;
+    background: var(--plane); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 22px; margin: 0;
+  }
+  @media (prefers-color-scheme: light) {
+    .ds:not([data-theme="dark"]) {
+      color-scheme: light;
+      --surface: #fcfcfb; --plane: #f9f9f7; --raised: #f0efec;
+      --ink: #0b0b0b; --ink-2: #52514e; --hair: rgba(11,11,11,.10);
+      --s-bed: #2a78d6; --s-hot: #eb6834;
+    }
+  }
+  .ds h1 { font-size: 15px; margin: 0 0 16px; }
+  .ds h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 24px 0 10px; font-weight: 600; }
+  .ds p { color: var(--ink-2); font-size: 12.5px; margin: 0 0 8px; max-width: 64ch; }
+  .ds code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--s-bed); }
+  .row { display: flex; gap: 18px; flex-wrap: wrap; align-items: baseline; }
+  .spec { border: 1px solid var(--hair); border-radius: 8px; padding: 12px 14px; background: var(--surface); }
+  .spec-meta { font-size: 10.5px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; margin-top: 6px; }
+  .tile-value { font-size: 30px; font-weight: 600; line-height: 1.1; letter-spacing: -.5px; }
+  .tab { font-variant-numeric: tabular-nums; }
+  .bad { border-color: var(--st-crit); }
+  .bad .spec-meta { color: var(--st-crit); }
+  .good { border-color: #0ca30c; }
+  table { border-collapse: collapse; font-size: 12.5px; width: 100%; max-width: 460px; }
+  th, td { text-align: left; padding: 5px 10px 5px 0; border-bottom: 1px solid var(--hair); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  td.n { font-variant-numeric: tabular-nums; text-align: right; }
+</style>
+
+<div class="ds">
+  <h1>Type & figures</h1>
+  <p>
+    One family everywhere, including large numbers: <code>system-ui, -apple-system, "Segoe UI", sans-serif</code>.
+    No display or serif face — on a control panel it reads as decoration.
+  </p>
+
+  <h2>Scale</h2>
+  <div class="spec">
+    <div class="tile-value">21.5°</div>
+    <div class="spec-meta">stat-tile value — 30px / 600 / −0.5px tracking (26px under 560px)</div>
+  </div>
+  <div class="spec" style="margin-top:8px">
+    <div style="font-size:15px;font-weight:700">3DTune</div>
+    <div class="spec-meta">brand — 15px / 700</div>
+  </div>
+  <div class="spec" style="margin-top:8px">
+    <div style="font-size:15px">Настройки прошивки</div>
+    <div class="spec-meta">body — 15px / 1.45</div>
+  </div>
+  <div class="spec" style="margin-top:8px">
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--muted);font-weight:600">Температуры</div>
+    <div class="spec-meta">section heading — 11px / 600 / uppercase / 0.7px</div>
+  </div>
+  <div class="spec" style="margin-top:8px">
+    <div style="font-size:12.5px;color:var(--ink-2)">EEPROM эмулируется во flash, ресурс ~10 000 циклов</div>
+    <div class="spec-meta">note / secondary — 12.5px, ink-2</div>
+  </div>
+  <div class="spec" style="margin-top:8px">
+    <div style="font-family:ui-monospace,Menlo,monospace;font-size:12px">&gt; N14 M503*38</div>
+    <div class="spec-meta">terminal & G-code — ui-monospace 12px / 1.55</div>
+  </div>
+
+  <h2>Figures — the rule that gets broken most</h2>
+  <p>
+    Proportional figures on large standalone numbers; <code>tabular-nums</code> only where digits must
+    line up vertically.
+  </p>
+  <div class="row">
+    <div class="spec good">
+      <div class="tile-value">121.0°</div>
+      <div class="spec-meta">✓ proportional — stat tile, hero figure</div>
+    </div>
+    <div class="spec bad">
+      <div class="tile-value tab">121.0°</div>
+      <div class="spec-meta">✗ tabular — reads loose at display size</div>
+    </div>
+  </div>
+
+  <h2>…and where tabular is required</h2>
+  <table>
+    <tr><th>Setting</th><th style="text-align:right">Value</th></tr>
+    <tr><td>M92 X</td><td class="n">160.00</td></tr>
+    <tr><td>M92 Z</td><td class="n">800.00</td></tr>
+    <tr><td>M301 P</td><td class="n">24.00</td></tr>
+    <tr><td>M851 Y</td><td class="n">−6.00</td></tr>
+  </table>
+  <p style="margin-top:8px">Axis ticks, table rows, number inputs, tooltip values, mesh cells.</p>
+
+  <h2>Text never wears the data colour</h2>
+  <p>
+    Values, labels and legends use ink tokens. Identity comes from a coloured mark
+    <i style="display:inline-block;width:14px;height:3px;border-radius:2px;background:var(--s-hot);vertical-align:middle"></i>
+    <em style="font-style:normal;color:var(--ink)">beside</em> the text, never from colouring the text.
+    The one exception is a label set inside a filled mark (a mesh cell), where white or ink is picked
+    by the fill's luminance.
+  </p>
+</div>

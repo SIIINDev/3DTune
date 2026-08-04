@@ -1,0 +1,154 @@
+<!-- @dsCard group="Data viz" -->
+<style>
+  .ds {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0d0d0d;
+    --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --hair: rgba(255,255,255,.10);
+    --s-bed: #3987e5; --s-hot: #d95926;
+    --div-lo: #3987e5; --div-mid: #383835; --div-hi: #e66767;
+    --radius-sm: 7px;
+    background: var(--plane); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 22px; margin: 0;
+  }
+  @media (prefers-color-scheme: light) {
+    .ds:not([data-theme="dark"]) {
+      color-scheme: light;
+      --surface: #fcfcfb; --plane: #f9f9f7;
+      --ink: #0b0b0b; --ink-2: #52514e; --grid: #e1e0d9; --axis: #c3c2b7;
+      --hair: rgba(11,11,11,.10);
+      --s-bed: #2a78d6; --s-hot: #eb6834;
+      --div-lo: #2a78d6; --div-mid: #f0efec; --div-hi: #e34948;
+    }
+  }
+  .ds h1 { font-size: 15px; margin: 0 0 6px; }
+  .ds h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 22px 0 10px; font-weight: 600; }
+  .ds p { color: var(--ink-2); font-size: 12.5px; margin: 0 0 10px; max-width: 66ch; }
+  .ds code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--s-bed); }
+  .card { background: var(--surface); border: 1px solid var(--hair); border-radius: 10px; padding: 14px; max-width: 620px; }
+
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--ink-2); margin-top: 10px }
+  .legend span { display: inline-flex; align-items: center; gap: 6px }
+  .key { width: 14px; height: 3px; border-radius: 2px; flex: none }
+  .key.hot { background: var(--s-hot) } .key.bed { background: var(--s-bed) }
+  .key.dashed.hot { background: none; background-image: repeating-linear-gradient(to right, var(--s-hot) 0 4px, transparent 4px 7px) }
+  .key.dashed.bed { background: none; background-image: repeating-linear-gradient(to right, var(--s-bed) 0 4px, transparent 4px 7px) }
+
+  .tooltip { display: inline-block; background: var(--surface); border: 1px solid var(--hair); border-radius: var(--radius-sm); box-shadow: 0 6px 20px rgba(0,0,0,.18); padding: 8px 10px; font-size: 12px; min-width: 150px }
+  .tt-time { color: var(--muted); margin-bottom: 5px; font-variant-numeric: tabular-nums }
+  .tt-row { display: flex; align-items: baseline; gap: 7px; margin-top: 3px }
+  .tt-val { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 4.5ch; text-align: right }
+  .tt-name { color: var(--ink-2) }
+
+  .mesh { display: grid; gap: 2px; max-width: 340px }
+  .mesh-row { display: grid; grid-auto-flow: column; gap: 2px }
+  .mesh-cell { padding: 9px 2px; border-radius: 4px; text-align: center; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--ink) }
+  .mesh-cell.pole { color: #fff }
+  .scale { margin-top: 10px; display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; max-width: 340px }
+  .scale-bar { flex: 1; height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--div-lo), var(--div-mid), var(--div-hi)) }
+  .spec { font-size: 12px; color: var(--ink-2); margin: 0; padding-left: 16px }
+  .spec li { margin-bottom: 3px }
+</style>
+
+<div class="ds">
+  <h1>Data viz</h1>
+
+  <h2>Temperature history — 2 series, targets as reference lines</h2>
+  <p>
+    Two entities (bed, hotend), not four series: the target is a dashed reference on the same hue, so
+    the identity channel stays at two. One axis, always — never a second y-scale.
+  </p>
+  <div class="card">
+    <svg viewBox="0 0 560 200" width="100%" role="img" aria-label="Пример графика температур">
+      <g stroke="var(--grid)" stroke-width="1">
+        <line x1="40" y1="12" x2="548" y2="12"/><line x1="40" y1="49" x2="548" y2="49"/>
+        <line x1="40" y1="86" x2="548" y2="86"/><line x1="40" y1="123" x2="548" y2="123"/>
+        <line x1="40" y1="160" x2="548" y2="160"/>
+      </g>
+      <line x1="40" y1="160" x2="548" y2="160" stroke="var(--axis)" stroke-width="1"/>
+      <g fill="var(--muted)" font-size="11" text-anchor="end" font-family="ui-monospace, Menlo, monospace">
+        <text x="34" y="16">250</text><text x="34" y="53">200</text><text x="34" y="90">150</text>
+        <text x="34" y="127">100</text><text x="34" y="164">0</text>
+      </g>
+      <g fill="var(--muted)" font-size="11">
+        <text x="40" y="180">−5 мин</text><text x="270" y="180" text-anchor="middle">−2 мин</text>
+        <text x="500" y="180" text-anchor="end">сейчас</text>
+      </g>
+
+      <path d="M40 160 L300 160 L300 44 L500 44" fill="none" stroke="var(--s-hot)" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <path d="M40 160 L260 160 L260 138 L500 138" fill="none" stroke="var(--s-bed)" stroke-width="1.5" stroke-dasharray="5 4"/>
+      <path d="M40 156 C160 155 240 154 300 152 C360 120 420 78 500 56" fill="none" stroke="var(--s-hot)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M40 157 C150 156 220 156 260 155 C330 150 420 143 500 140" fill="none" stroke="var(--s-bed)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+
+      <circle cx="500" cy="56" r="6" fill="var(--surface)"/><circle cx="500" cy="56" r="4" fill="var(--s-hot)"/>
+      <circle cx="500" cy="140" r="6" fill="var(--surface)"/><circle cx="500" cy="140" r="4" fill="var(--s-bed)"/>
+      <text x="511" y="60" fill="var(--ink)" font-size="11">208°</text>
+      <text x="511" y="144" fill="var(--ink)" font-size="11">59°</text>
+    </svg>
+    <div class="legend">
+      <span><i class="key hot"></i>сопло</span>
+      <span><i class="key dashed hot"></i>цель сопла</span>
+      <span><i class="key bed"></i>стол</span>
+      <span><i class="key dashed bed"></i>цель стола</span>
+    </div>
+  </div>
+  <ul class="spec" style="margin-top:10px">
+    <li>lines 2px, round join/cap; targets 1.5px dashed on the same hue</li>
+    <li>end markers r=4 with a 2px surface ring; direct end labels in ink, never the series colour</li>
+    <li>gridlines solid hairlines one step off surface — never dashed</li>
+    <li>y ticks snap to clean multiples; container height includes the x-axis band</li>
+    <li>colliding end labels get a leader line, never a silent vertical stack</li>
+  </ul>
+
+  <h2>Crosshair tooltip — every series at that X</h2>
+  <p>Values lead, series names follow: the reader already has the series and wants the number. Line keys, not filled boxes.</p>
+  <div class="tooltip">
+    <div class="tt-time">14 с назад</div>
+    <div class="tt-row"><i class="key dashed bed"></i><span class="tt-val">60.0°</span><span class="tt-name">стол, цель</span></div>
+    <div class="tt-row"><i class="key dashed hot"></i><span class="tt-val">215.0°</span><span class="tt-name">сопло, цель</span></div>
+    <div class="tt-row"><i class="key bed"></i><span class="tt-val">59.4°</span><span class="tt-name">стол</span></div>
+    <div class="tt-row"><i class="key hot"></i><span class="tt-val">208.7°</span><span class="tt-name">сопло</span></div>
+  </div>
+
+  <h2>Bed mesh — diverging, not sequential</h2>
+  <p>
+    A mesh value has <em>polarity</em>: above or below the reference plane. Two opposite poles with a
+    neutral gray midpoint and a symmetric domain around zero. Every cell is labelled, so the heatmap
+    doubles as its own table view.
+  </p>
+  <div class="mesh">
+    <div class="mesh-row">
+      <div class="mesh-cell pole" style="background:color-mix(in oklab, var(--div-hi) 61%, var(--div-mid))">0.078</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-hi) 36%, var(--div-mid))">0.046</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-lo) 13%, var(--div-mid))">-0.017</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-lo) 32%, var(--div-mid))">-0.041</div>
+    </div>
+    <div class="mesh-row">
+      <div class="mesh-cell pole" style="background:color-mix(in oklab, var(--div-hi) 100%, var(--div-mid))">0.128</div>
+      <div class="mesh-cell pole" style="background:color-mix(in oklab, var(--div-hi) 74%, var(--div-mid))">0.095</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-hi) 25%, var(--div-mid))">0.032</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-hi) 6%, var(--div-mid))">0.008</div>
+    </div>
+    <div class="mesh-row">
+      <div class="mesh-cell pole" style="background:color-mix(in oklab, var(--div-hi) 86%, var(--div-mid))">0.110</div>
+      <div class="mesh-cell pole" style="background:color-mix(in oklab, var(--div-hi) 61%, var(--div-mid))">0.078</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-hi) 12%, var(--div-mid))">0.015</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-lo) 7%, var(--div-mid))">-0.009</div>
+    </div>
+    <div class="mesh-row">
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-hi) 31%, var(--div-mid))">0.040</div>
+      <div class="mesh-cell" style="background:color-mix(in oklab, var(--div-hi) 5%, var(--div-mid))">0.007</div>
+      <div class="mesh-cell pole" style="background:color-mix(in oklab, var(--div-lo) 43%, var(--div-mid))">-0.055</div>
+      <div class="mesh-cell pole" style="background:color-mix(in oklab, var(--div-lo) 62%, var(--div-mid))">-0.079</div>
+    </div>
+  </div>
+  <div class="scale">
+    <span>-0.128</span><span class="scale-bar" aria-hidden="true"></span><span>+0.128</span>
+  </div>
+  <p style="margin-top:8px">
+    Cell fill is <code>color-mix(in oklab, pole k%, midpoint)</code> where
+    <code>k = |v| / max|v|</code>; cell ink flips to white past <code>k &gt; 0.5</code> so the label
+    always clears contrast.
+  </p>
+</div>

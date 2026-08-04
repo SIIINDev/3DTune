@@ -1,0 +1,119 @@
+<!-- @dsCard group="Components" -->
+<style>
+  .ds {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0d0d0d; --raised: #242422;
+    --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --hair: rgba(255,255,255,.10); --s-bed: #3987e5; --s-hot: #d95926;
+    --st-good: #0ca30c; --st-warn: #fab219; --st-crit: #d03b3b;
+    --radius: 10px; --radius-sm: 7px;
+    background: var(--plane); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 22px; margin: 0;
+  }
+  @media (prefers-color-scheme: light) {
+    .ds:not([data-theme="dark"]) {
+      color-scheme: light;
+      --surface: #fcfcfb; --plane: #f9f9f7; --raised: #f0efec;
+      --ink: #0b0b0b; --ink-2: #52514e; --hair: rgba(11,11,11,.10);
+      --s-bed: #2a78d6; --s-hot: #eb6834;
+    }
+  }
+  .ds h1 { font-size: 15px; margin: 0 0 6px; }
+  .ds h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 22px 0 10px; font-weight: 600; }
+  .ds p { color: var(--ink-2); font-size: 12.5px; margin: 0 0 10px; max-width: 64ch; }
+  .ds code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--s-bed); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 10px; max-width: 520px; }
+  .tile { background: var(--surface); border: 1px solid var(--hair); border-radius: var(--radius-sm); padding: 11px 12px; }
+  .tile-label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .key { flex: none; width: 14px; height: 3px; border-radius: 2px; }
+  .key.hot { background: var(--s-hot) } .key.bed { background: var(--s-bed) }
+  .key.dashed.hot { background: none; background-image: repeating-linear-gradient(to right, var(--s-hot) 0 4px, transparent 4px 7px) }
+  .key.dashed.bed { background: none; background-image: repeating-linear-gradient(to right, var(--s-bed) 0 4px, transparent 4px 7px) }
+  .tile-value { font-size: 30px; font-weight: 600; line-height: 1.1; margin: 4px 0 2px; letter-spacing: -.5px; }
+  .tile-sub { font-size: 12px; color: var(--ink-2); }
+  .meter { height: 5px; border-radius: 3px; overflow: hidden; margin-top: 9px; }
+  .meter.hot { background: color-mix(in oklab, var(--s-hot) 16%, var(--surface)) }
+  .meter.bed { background: color-mix(in oklab, var(--s-bed) 16%, var(--surface)) }
+  .meter i { display: block; height: 100%; border-radius: 3px; }
+  .meter.hot i { background: var(--s-hot) } .meter.bed i { background: var(--s-bed) }
+
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); margin-right: 18px; }
+  .status-icon { width: 16px; height: 16px; display: grid; place-items: center; font-size: 12px; line-height: 1; border-radius: 50%; color: var(--surface); background: var(--muted); font-weight: 700; }
+  .status-icon.connected { background: var(--st-good) }
+  .status-icon.connecting { background: var(--st-warn); color: #0b0b0b }
+  .status-icon.error { background: var(--st-crit) }
+
+  .banner { display: flex; gap: 9px; align-items: flex-start; border-radius: var(--radius-sm); padding: 9px 12px; font-size: 13px; border: 1px solid; background: var(--surface); margin-bottom: 8px; max-width: 620px; }
+  .banner-icon { flex: none; font-weight: 700; line-height: 1.35 }
+  .banner.warning { border-color: var(--st-warn) } .banner.warning .banner-icon { color: var(--st-warn) }
+  .banner.critical { border-color: var(--st-crit) } .banner.critical .banner-icon { color: var(--st-crit) }
+
+  .chips { display: flex; gap: 6px; flex-wrap: wrap }
+  .chip { font-size: 12px; padding: 5px 10px; border-radius: 20px; background: var(--plane); border: 1px solid var(--hair); display: inline-flex; align-items: center; gap: 5px }
+  .chip.trig { border-color: var(--st-crit) }
+  .chip.trig .ci { color: var(--st-crit); font-weight: 700 }
+  .chip .ci { color: var(--muted) }
+
+  .toast { display: inline-flex; gap: 8px; align-items: flex-start; padding: 11px 16px; border-radius: var(--radius-sm); font-size: 14px; background: var(--st-crit); color: #fff; box-shadow: 0 10px 28px rgba(0,0,0,.28); margin-right: 10px; }
+  .toast.good { background: var(--st-good); color: #fff }
+</style>
+
+<div class="ds">
+  <h1>Telemetry & status</h1>
+
+  <h2>Stat tiles + meters</h2>
+  <p>
+    The number is the chart — a one-bar bar chart would be wrong here. The meter track is a lighter
+    step of the fill's own hue, so state reads across the whole bar.
+  </p>
+  <div class="tiles">
+    <div class="tile">
+      <div class="tile-label"><i class="key hot"></i>Сопло</div>
+      <div class="tile-value">214.8°</div>
+      <div class="tile-sub">цель 215°</div>
+      <div class="meter hot"><i style="width:32%"></i></div>
+    </div>
+    <div class="tile">
+      <div class="tile-label"><i class="key bed"></i>Стол</div>
+      <div class="tile-value">59.6°</div>
+      <div class="tile-sub">цель 60°</div>
+      <div class="meter bed"><i style="width:18%"></i></div>
+    </div>
+    <div class="tile">
+      <div class="tile-label"><i class="key hot"></i>Сопло</div>
+      <div class="tile-value">21.4°</div>
+      <div class="tile-sub">нагрев выключен</div>
+      <div class="meter hot"><i style="width:0%"></i></div>
+    </div>
+  </div>
+
+  <h2>Connection status — icon + label, never colour alone</h2>
+  <div style="margin-bottom:14px">
+    <span class="status"><i class="status-icon">•</i>не подключено</span>
+    <span class="status"><i class="status-icon connecting">…</i>подключаюсь…</span>
+    <span class="status"><i class="status-icon connected">✓</i>подключено</span>
+    <span class="status"><i class="status-icon error">!</i>ОСТАНОВЛЕН — нужен power cycle</span>
+  </div>
+
+  <h2>Banners — firmware diagnostics</h2>
+  <p>Derived from <code>M115 Cap:</code> and <code>M503</code>, so the app states what the firmware cannot do rather than failing silently.</p>
+  <div class="banner critical"><span class="banner-icon">✕</span><span>Принтер остановлен по M112. Выключи и включи питание платы.</span></div>
+  <div class="banner warning"><span class="banner-icon">⚠</span><span>EMERGENCY_PARSER выключен — M112 встаёт в очередь за буфером, STOP может сработать с задержкой</span></div>
+  <div class="banner warning"><span class="banner-icon">⚠</span><span>В M503 нет M304 — стол в bang-bang, PID стола требует пересборки прошивки</span></div>
+
+  <h2>Endstop chips</h2>
+  <div class="chips">
+    <span class="chip"><i class="ci">○</i>x_min: открыт</span>
+    <span class="chip"><i class="ci">○</i>y_min: открыт</span>
+    <span class="chip trig"><i class="ci">●</i>z_min: сработал</span>
+    <span class="chip"><i class="ci">○</i>z_probe: открыт</span>
+  </div>
+
+  <h2>Toasts</h2>
+  <div style="margin-top:4px">
+    <span class="toast good"><span>✓</span><span>Сохранено в EEPROM</span></span>
+    <span class="toast"><span>⚠</span><span>hotend target 300C exceeds limit 265C</span></span>
+  </div>
+</div>

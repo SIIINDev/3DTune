@@ -1,0 +1,128 @@
+<!-- @dsCard group="Foundations" -->
+<style>
+  .ds {
+    color-scheme: light;
+    --surface: #fcfcfb; --plane: #f9f9f7; --raised: #f0efec;
+    --ink: #0b0b0b; --ink-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7; --hair: rgba(11,11,11,.10);
+    --s-bed: #2a78d6; --s-hot: #eb6834;
+    --div-lo: #2a78d6; --div-mid: #f0efec; --div-hi: #e34948;
+    --st-good: #0ca30c; --st-warn: #fab219; --st-serious: #ec835a; --st-crit: #d03b3b;
+    background: var(--plane); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 22px; margin: 0;
+  }
+  .ds.dark {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0d0d0d; --raised: #242422;
+    --ink: #ffffff; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --hair: rgba(255,255,255,.10);
+    --s-bed: #3987e5; --s-hot: #d95926;
+    --div-lo: #3987e5; --div-mid: #383835; --div-hi: #e66767;
+  }
+  .ds h1 { font-size: 15px; margin: 0 0 4px; letter-spacing: -.2px; }
+  .ds h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 22px 0 9px; font-weight: 600; }
+  .ds p { color: var(--ink-2); font-size: 12.5px; margin: 0 0 2px; max-width: 62ch; }
+  .ds code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fit, minmax(126px, 1fr)); gap: 8px; }
+  .sw { border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .sw i { display: block; height: 46px; }
+  .sw span { display: block; padding: 6px 8px; font-size: 11px; }
+  .sw b { display: block; font-weight: 600; }
+  .sw em { color: var(--muted); font-style: normal; font-family: ui-monospace, Menlo, monospace; }
+  .ramp { display: flex; height: 34px; border-radius: 8px; overflow: hidden; border: 1px solid var(--hair); }
+  .ramp i { flex: 1; }
+  .ramp-labels { display: flex; font-size: 10px; color: var(--muted); margin-top: 4px; font-family: ui-monospace, Menlo, monospace; }
+  .ramp-labels span { flex: 1; }
+  .ramp-labels span:last-child { text-align: right; }
+  .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .note { border-left: 2px solid var(--st-good); padding-left: 10px; font-size: 12px; color: var(--ink-2); }
+  .modes { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
+</style>
+
+<div class="modes">
+  <div class="ds">
+    <h1>Colors — light</h1>
+    <p>Two categorical series only. Bed takes slot 1 (blue), hotend slot 2 (orange).</p>
+
+    <h2>Series (identity)</h2>
+    <div class="swatches">
+      <div class="sw"><i style="background:var(--s-bed)"></i><span><b>bed</b><em>#2a78d6</em></span></div>
+      <div class="sw"><i style="background:var(--s-hot)"></i><span><b>hotend</b><em>#eb6834</em></span></div>
+    </div>
+
+    <h2>Surfaces & ink</h2>
+    <div class="swatches">
+      <div class="sw"><i style="background:var(--surface)"></i><span><b>surface</b><em>#fcfcfb</em></span></div>
+      <div class="sw"><i style="background:var(--plane)"></i><span><b>plane</b><em>#f9f9f7</em></span></div>
+      <div class="sw"><i style="background:var(--ink)"></i><span><b>ink</b><em>#0b0b0b</em></span></div>
+      <div class="sw"><i style="background:var(--ink-2)"></i><span><b>ink-2</b><em>#52514e</em></span></div>
+      <div class="sw"><i style="background:var(--muted)"></i><span><b>muted</b><em>#898781</em></span></div>
+      <div class="sw"><i style="background:var(--grid)"></i><span><b>grid</b><em>#e1e0d9</em></span></div>
+    </div>
+
+    <h2>Diverging — bed mesh deviation</h2>
+    <div class="ramp">
+      <i style="background:var(--div-lo)"></i>
+      <i style="background:color-mix(in oklab, var(--div-lo) 50%, var(--div-mid))"></i>
+      <i style="background:var(--div-mid)"></i>
+      <i style="background:color-mix(in oklab, var(--div-hi) 50%, var(--div-mid))"></i>
+      <i style="background:var(--div-hi)"></i>
+    </div>
+    <div class="ramp-labels"><span>below</span><span style="text-align:center">0</span><span>above</span></div>
+    <p style="margin-top:6px">Neutral gray midpoint, warm/cool poles. Never a rainbow — a mesh value has polarity, not magnitude alone.</p>
+
+    <h2>Status (reserved — never a series)</h2>
+    <div class="swatches">
+      <div class="sw"><i style="background:var(--st-good)"></i><span><b>good</b><em>#0ca30c</em></span></div>
+      <div class="sw"><i style="background:var(--st-warn)"></i><span><b>warning</b><em>#fab219</em></span></div>
+      <div class="sw"><i style="background:var(--st-serious)"></i><span><b>serious</b><em>#ec835a</em></span></div>
+      <div class="sw"><i style="background:var(--st-crit)"></i><span><b>critical</b><em>#d03b3b</em></span></div>
+    </div>
+    <p style="margin-top:8px">Always shipped with an icon + label, never colour alone.</p>
+  </div>
+
+  <div class="ds dark">
+    <h1>Colors — dark</h1>
+    <p>Selected for the dark surface, not an automatic flip of the light values.</p>
+
+    <h2>Series (identity)</h2>
+    <div class="swatches">
+      <div class="sw"><i style="background:var(--s-bed)"></i><span><b>bed</b><em>#3987e5</em></span></div>
+      <div class="sw"><i style="background:var(--s-hot)"></i><span><b>hotend</b><em>#d95926</em></span></div>
+    </div>
+
+    <h2>Surfaces & ink</h2>
+    <div class="swatches">
+      <div class="sw"><i style="background:var(--surface)"></i><span><b>surface</b><em>#1a1a19</em></span></div>
+      <div class="sw"><i style="background:var(--plane)"></i><span><b>plane</b><em>#0d0d0d</em></span></div>
+      <div class="sw"><i style="background:var(--ink)"></i><span><b>ink</b><em>#ffffff</em></span></div>
+      <div class="sw"><i style="background:var(--ink-2)"></i><span><b>ink-2</b><em>#c3c2b7</em></span></div>
+      <div class="sw"><i style="background:var(--muted)"></i><span><b>muted</b><em>#898781</em></span></div>
+      <div class="sw"><i style="background:var(--grid)"></i><span><b>grid</b><em>#2c2c2a</em></span></div>
+    </div>
+
+    <h2>Diverging — bed mesh deviation</h2>
+    <div class="ramp">
+      <i style="background:var(--div-lo)"></i>
+      <i style="background:color-mix(in oklab, var(--div-lo) 50%, var(--div-mid))"></i>
+      <i style="background:var(--div-mid)"></i>
+      <i style="background:color-mix(in oklab, var(--div-hi) 50%, var(--div-mid))"></i>
+      <i style="background:var(--div-hi)"></i>
+    </div>
+    <div class="ramp-labels"><span>below</span><span style="text-align:center">0</span><span>above</span></div>
+
+    <h2>Validation</h2>
+    <p class="note">
+      Both modes pass all six categorical checks (lightness band, chroma floor, CVD separation,
+      normal-vision floor, contrast vs surface, documented palette).<br>
+      Worst adjacent pair — light: <code>CVD ΔE 24.7</code>, <code>normal 33.6</code>;
+      dark: <code>CVD ΔE 26.8</code>, <code>normal 31.8</code>. Target is ≥ 8 / ≥ 15.
+    </p>
+    <p style="margin-top:8px">
+      Re-run after any change:<br>
+      <code>validate_palette.js "#2a78d6,#eb6834" --mode light --surface "#fcfcfb"</code><br>
+      <code>validate_palette.js "#3987e5,#d95926" --mode dark --surface "#1a1a19"</code>
+    </p>
+  </div>
+</div>

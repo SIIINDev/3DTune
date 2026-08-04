@@ -1,0 +1,151 @@
+<!-- @dsCard group="Components" -->
+<style>
+  .ds {
+    color-scheme: dark;
+    --surface: #1a1a19; --plane: #0d0d0d; --raised: #242422;
+    --ink: #fff; --ink-2: #c3c2b7; --muted: #898781;
+    --hair: rgba(255,255,255,.10); --s-bed: #3987e5;
+    --st-warn: #fab219; --st-crit: #d03b3b;
+    --radius-sm: 7px; --tap: 44px;
+    background: var(--plane); color: var(--ink);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 22px; margin: 0;
+  }
+  @media (prefers-color-scheme: light) {
+    .ds:not([data-theme="dark"]) {
+      color-scheme: light;
+      --surface: #fcfcfb; --plane: #f9f9f7; --raised: #f0efec;
+      --ink: #0b0b0b; --ink-2: #52514e; --hair: rgba(11,11,11,.10); --s-bed: #2a78d6;
+    }
+  }
+  .ds h1 { font-size: 15px; margin: 0 0 6px; }
+  .ds h2 { font-size: 11px; text-transform: uppercase; letter-spacing: .7px; color: var(--muted); margin: 22px 0 10px; font-weight: 600; }
+  .ds p { color: var(--ink-2); font-size: 12.5px; margin: 0 0 10px; max-width: 64ch; }
+  .ds code { font-family: ui-monospace, Menlo, monospace; font-size: 11.5px; color: var(--s-bed); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; }
+
+  button {
+    font: inherit; font-size: 14px; padding: 9px 13px; border-radius: var(--radius-sm);
+    border: 1px solid var(--hair); background: var(--raised); color: var(--ink);
+    min-height: var(--tap); cursor: pointer;
+  }
+  button.primary { background: var(--s-bed); border-color: var(--s-bed); color: #fff; font-weight: 600; }
+  button.ghost { background: transparent; }
+  button.danger { background: var(--st-crit); border-color: var(--st-crit); color: #fff; font-weight: 700; letter-spacing: .4px; }
+  button.mini { min-height: 30px; padding: 4px 10px; font-size: 12px; }
+  button.icon { min-height: 34px; min-width: 34px; padding: 4px 8px; font-size: 15px; }
+  button:disabled { opacity: .38; cursor: not-allowed; }
+  button.focus { outline: 2px solid var(--s-bed); outline-offset: 2px; }
+
+  .seg { display: inline-flex; border: 1px solid var(--hair); border-radius: var(--radius-sm); overflow: hidden; background: var(--raised); }
+  .seg button { border: 0; border-radius: 0; background: transparent; min-width: 46px; min-height: 38px; padding: 6px 10px; }
+  .seg button[aria-pressed="true"] { background: var(--s-bed); color: #fff; font-weight: 600; }
+
+  input, select {
+    font: inherit; font-size: 14px; padding: 8px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--hair); background: var(--plane); color: var(--ink); min-height: 40px;
+  }
+  input[type=number] { width: 88px; font-variant-numeric: tabular-nums; }
+  input[type=range] { padding: 0; min-height: 34px; accent-color: var(--s-bed); }
+  input[data-dirty="true"] { border-color: var(--st-warn); background: color-mix(in oklab, var(--st-warn) 10%, var(--plane)); }
+  label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+
+  .jog { display: grid; grid-template-columns: repeat(5, 56px); grid-template-rows: repeat(3, 48px); gap: 6px; }
+  .jog button { min-height: 48px; padding: 4px; }
+  .j-up { grid-area: 1/2 } .j-left { grid-area: 2/1 } .j-mid { grid-area: 2/2 }
+  .j-right { grid-area: 2/3 } .j-down { grid-area: 3/2 }
+  .j-zup { grid-area: 1/5 } .j-zmid { grid-area: 2/5 } .j-zdown { grid-area: 3/5 }
+
+  .set-fields { display: grid; grid-template-columns: repeat(4, 108px); gap: 7px; }
+  .set-field { display: grid; gap: 3px; }
+  .set-field span { font-size: 11px; color: var(--muted); font-family: ui-monospace, Menlo, monospace; }
+  .set-field input { width: 100%; min-height: 38px; }
+  .pending { border: 1px solid var(--st-warn); border-radius: var(--radius-sm); padding: 10px 11px; font-size: 13px; max-width: 420px; }
+  .pending ul { margin: 6px 0 10px; padding-left: 18px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+</style>
+
+<div class="ds">
+  <h1>Controls</h1>
+  <p>
+    Touch targets are <code>44px</code> minimum — this is driven from a phone, sometimes with
+    filament on your fingers. Segmented controls carry state in <code>aria-pressed</code>, not
+    a class alone.
+  </p>
+
+  <h2>Buttons</h2>
+  <div class="row">
+    <button class="primary">Нагрев</button>
+    <button>Обновить</button>
+    <button class="ghost">Отключиться</button>
+    <button class="danger">СТОП</button>
+    <button disabled>Подключиться</button>
+    <button class="focus">focus-visible</button>
+  </div>
+  <div class="row">
+    <button class="mini">Прочитать M503</button>
+    <button class="ghost mini">M119</button>
+    <button class="icon ghost">◐</button>
+  </div>
+
+  <h2>Segmented</h2>
+  <div class="row">
+    <div class="seg">
+      <button aria-pressed="false">1 мин</button>
+      <button aria-pressed="true">5 мин</button>
+      <button aria-pressed="false">15 мин</button>
+      <button aria-pressed="false">60 мин</button>
+    </div>
+  </div>
+  <div class="row">
+    <div class="seg">
+      <button aria-pressed="false">0.1</button>
+      <button aria-pressed="true">1</button>
+      <button aria-pressed="false">10</button>
+      <button aria-pressed="false">50</button>
+    </div>
+  </div>
+
+  <h2>Inputs</h2>
+  <div class="row">
+    <label>Сопло °C <input type="number" value="215"></label>
+    <label>Baud <input type="number" value="115200" style="width:104px"></label>
+    <label><input type="checkbox" checked style="min-height:0;width:18px;height:18px;accent-color:var(--s-bed)"> применить (U1)</label>
+  </div>
+  <div class="row">
+    <label style="flex:1;max-width:280px">Вентилятор <input type="range" value="90" style="flex:1"></label>
+    <span style="font-size:12px;color:var(--muted)">35%</span>
+  </div>
+
+  <h2>Jog pad</h2>
+  <div class="jog">
+    <button class="j-up">Y+</button>
+    <button class="j-left">X−</button>
+    <button class="j-mid">⌂ XY</button>
+    <button class="j-right">X+</button>
+    <button class="j-down">Y−</button>
+    <button class="j-zup">Z+</button>
+    <button class="j-zmid">⌂ Z</button>
+    <button class="j-zdown">Z−</button>
+  </div>
+
+  <h2>Settings editor — dirty state & pending batch</h2>
+  <p>
+    Edited fields are marked, never auto-saved. The pending panel shows the exact G-code that will be
+    sent, so nothing is applied that the user has not read.
+  </p>
+  <div class="set-fields" style="margin-bottom:12px">
+    <label class="set-field"><span>X</span><input type="number" value="160"></label>
+    <label class="set-field"><span>Y</span><input type="number" value="160"></label>
+    <label class="set-field"><span>Z</span><input type="number" value="800"></label>
+    <label class="set-field"><span>E</span><input type="number" value="770" data-dirty="true"></label>
+  </div>
+  <div class="pending">
+    <strong>Не применено</strong>
+    <ul><li>M92 E770</li><li>M301 P26.5</li></ul>
+    <div class="row" style="margin:0">
+      <button class="primary mini">Применить</button>
+      <button class="ghost mini">Отменить</button>
+      <button class="ghost mini">Применить и сохранить (M500)</button>
+    </div>
+  </div>
+</div>
