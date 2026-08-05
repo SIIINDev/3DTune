@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { calculateESteps, Printer } from '../src/printer/printer.ts';
+import { waitFor } from './support.ts';
 
 const printer = new Printer();
 
@@ -42,7 +43,10 @@ test('warnings surface firmware gaps that matter for this app', () => {
 });
 
 test('temperature reports stream into history', async () => {
-  await new Promise((r) => setTimeout(r, 2500));
+  await waitFor(
+    () => printer.tempHistory.length >= 2 && printer.snapshot().temps.hotend.current > 15,
+    'at least two temperature samples with a plausible hotend reading',
+  );
   const s = printer.snapshot();
   assert.ok(s.temps.hotend.current > 15, `hotend reads ${s.temps.hotend.current}`);
   assert.ok(printer.tempHistory.length >= 2, 'history should accumulate samples');
@@ -141,7 +145,7 @@ test('probe offset validates and round-trips through M503', async () => {
 
 test('G29 mesh is captured without swallowing the column-header row', async () => {
   await printer.runBedLeveling(true);
-  await new Promise((r) => setTimeout(r, 300));
+  await waitFor(() => printer.snapshot().leveling.mesh !== null, 'the mesh to be captured');
   const { leveling } = printer.snapshot();
   assert.ok(leveling.mesh, 'mesh should be captured');
   assert.equal(leveling.mesh?.length, 4, 'a 4x4 probe must yield exactly 4 rows, not 5');
@@ -166,7 +170,10 @@ test('raw terminal cannot bypass heater, motion or EEPROM safety paths', async (
 
 test('endstops are merged from the multi-line M119 report', async () => {
   await printer.readEndstops();
-  await new Promise((r) => setTimeout(r, 200));
+  await waitFor(
+    () => Object.keys(printer.snapshot().endstops).length >= 3,
+    'the multi-line M119 report to be merged',
+  );
   const { endstops } = printer.snapshot();
   assert.ok(Object.keys(endstops).length >= 3, JSON.stringify(endstops));
   assert.equal(endstops['x_min'], 'open');

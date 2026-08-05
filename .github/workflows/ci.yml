@@ -19,6 +19,10 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # A second run on the same machine catches order dependence and timing flakiness, which a
+      # single green run hides. The suite is ~15s, so this is cheap insurance.
+      - run: npm test
       - run: npm run typecheck
       - run: node --check web/app.js
       - run: node --check web/mesh3d.js
+      - run: node --check web/chart.js

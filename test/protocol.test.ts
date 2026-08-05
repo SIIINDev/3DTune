@@ -6,6 +6,7 @@ import { marlinChecksum } from '../src/protocol/checksum.ts';
 import { parseLine } from '../src/protocol/parse.ts';
 import { MarlinSim, type SimOptions } from '../src/sim/marlin-sim.ts';
 import type { Transport } from '../src/transport/types.ts';
+import { waitFor } from './support.ts';
 
 class SimTransport extends EventEmitter implements Transport {
   readonly label = 'test://sim';
@@ -211,7 +212,8 @@ test('M112 halts the link and rejects further commands', async () => {
     });
     await link.send('M115');
     link.sendRaw('M112');
-    await new Promise((r) => setTimeout(r, 2200));
+    // Without EMERGENCY_PARSER the simulator delays the kill, so wait for the event, not a duration.
+    await waitFor(() => halted !== '', 'the printer to report that it halted');
     assert.match(halted, /halted/i);
     assert.equal(link.isHalted, true);
     await assert.rejects(() => link.send('M105'), /halted/i);

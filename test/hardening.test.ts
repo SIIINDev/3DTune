@@ -10,6 +10,7 @@ import { Link } from '../src/protocol/link.ts';
 import { DEADMAN_DEFAULT_MS, startServer, type ServerHandle } from '../src/server/server.ts';
 import { MarlinSim } from '../src/sim/marlin-sim.ts';
 import type { Transport } from '../src/transport/types.ts';
+import { waitFor } from './support.ts';
 
 /* The owner chose a 30-minute dead-man window. It is a safety decision, not a tunable default,
    so it gets asserted rather than left to drift with a future edit. */
@@ -180,7 +181,14 @@ test('two clients writing the same setting converge on one value from the printe
       a.rpc('applySettings', { commands: ['M92 E731'] }),
       b.rpc('applySettings', { commands: ['M92 E732'] }),
     ]);
-    await new Promise((r) => setTimeout(r, 200));
+
+    const settled = () => printer.snapshot().settings['M92']?.['E'];
+    const lastOfRaw = (states: Record<string, unknown>[]) =>
+      (states.at(-1)?.['settings'] as Record<string, Record<string, number>> | undefined)?.['M92']?.['E'];
+    await waitFor(
+      () => settled() !== undefined && lastOfRaw(a.states) === settled() && lastOfRaw(b.states) === settled(),
+      'both clients to receive the printer value',
+    );
 
     const truth = printer.snapshot().settings['M92']?.['E'];
     assert.ok(truth === 731 || truth === 732, `one of the two writes must win, got ${String(truth)}`);
