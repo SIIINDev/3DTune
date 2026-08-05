@@ -226,6 +226,7 @@ function applyState(s) {
   safe('banners', () => renderBanners(s));
   safe('endstops', () => renderEndstops(s.endstops));
   safe('mesh', () => renderMesh(s.leveling));
+  safe('screws', () => renderScrews(s.leveling?.analysis));
   safe('leveling', () => {
     $('levelingState').textContent = s.leveling.on ? 'компенсация включена' : 'компенсация выключена';
   });
@@ -362,6 +363,92 @@ function renderEndstops(map) {
     chip.append(icon, label);
     box.appendChild(chip);
   }
+}
+
+const SCREW_LABEL = {
+  frontLeft: 'передний левый',
+  frontRight: 'передний правый',
+  backLeft: 'задний левый',
+  backRight: 'задний правый',
+};
+
+/* Grid order matches the physical bed: back row on top, front row at the bottom, so the card sits
+   the same way round as the bed in front of you. */
+const SCREW_ORDER = ['backLeft', 'backRight', 'frontLeft', 'frontRight'];
+
+function renderScrews(analysis) {
+  const box = $('screwMap');
+  const note = $('screwAssumption');
+  box.replaceChildren();
+
+  const screws = analysis?.screws ?? [];
+  if (screws.length === 0) {
+    box.dataset.empty = 'true';
+    const span = document.createElement('span');
+    span.className = 'muted small';
+    span.textContent = 'нет данных — прощупай стол';
+    box.appendChild(span);
+    note.textContent = '';
+    return;
+  }
+  box.dataset.empty = 'false';
+
+  const byCorner = new Map(screws.map((screw) => [screw.corner, screw]));
+  const back = document.createElement('div');
+  back.className = 'bed-orientation';
+  back.textContent = '↑ дальняя сторона стола';
+  box.appendChild(back);
+
+  for (const corner of SCREW_ORDER) {
+    const screw = byCorner.get(corner);
+    if (!screw) continue;
+    const cell = document.createElement('div');
+    cell.className = 'screw';
+    cell.dataset.action = screw.action;
+
+    const name = document.createElement('div');
+    name.className = 'screw-corner';
+    name.textContent = SCREW_LABEL[corner] ?? corner;
+
+    const action = document.createElement('div');
+    action.className = 'screw-action';
+    const arrow = document.createElement('span');
+    arrow.className = 'screw-arrow';
+    arrow.setAttribute('aria-hidden', 'true');
+    const verb = document.createElement('span');
+    if (screw.action === 'leave') {
+      arrow.textContent = '✓';
+      verb.textContent = 'не трогать';
+    } else {
+      arrow.textContent = screw.action === 'tighten' ? '↻' : '↺';
+      const turns = document.createElement('span');
+      turns.className = 'screw-turns';
+      turns.textContent = `${screw.turnLabel} об.`;
+      verb.textContent = screw.action === 'tighten' ? 'затянуть' : 'ослабить';
+      action.append(arrow, verb, turns);
+    }
+    if (screw.action === 'leave') action.append(arrow, verb);
+
+    const detail = document.createElement('div');
+    detail.className = 'screw-detail';
+    detail.textContent =
+      `высота ${signed(screw.height)} · нужно ${signed(screw.deltaMm)} · ` +
+      `X${Math.round(screw.x)} Y${Math.round(screw.y)}`;
+
+    cell.append(name, action, detail);
+    box.appendChild(cell);
+  }
+
+  const front = document.createElement('div');
+  front.className = 'bed-orientation';
+  front.textContent = '↓ сторона, обращённая к тебе';
+  box.appendChild(front);
+
+  note.textContent =
+    'Отсчёт от средней высоты четырёх винтов, поэтому Z-offset почти не сдвигается. ' +
+    'Допущения: шаг винта 0.5 мм за оборот (M3) и «затянуть» опускает стол. ' +
+    'Проверь направление один раз на своём принтере: если стол пошёл не туда, поменяй ' +
+    'bedScrews.tighteningLowersBed в ~/.3dtune/config.json.';
 }
 
 function renderMesh(leveling) {
@@ -737,6 +824,55 @@ $('applyProbeOffset').onclick = async () => {
   }
   await call('probeOffset', params, 'M851 применён');
   probeEdits = {};
+};
+
+$('autoConfigureBed').onclick = async () => {
+  if (
+    !confirm(
+      'Полная конфигурация стола:\n\n' +
+        '1. G28 — все оси в нуль\n' +
+        '2. G29 — прощупать стол зондом\n' +
+        '3. включить компенсацию (M420 S1)\n' +
+        '4. M500 — записать в EEPROM и перечитать\n\n' +
+        'Принтер будет двигаться. Убедись, что стол чист, щуп установлен и на пути ничего нет. Продолжить?',
+    )
+  ) {
+    return;
+  }
+
+  const button = $('autoConfigureBed');
+  const status = $('autoConfigureStatus');
+  const list = $('autoConfigureSteps');
+  button.disabled = true;
+  status.textContent = 'идёт замер…';
+  list.replaceChildren();
+  list.hidden = true;
+
+  try {
+    const report = await rpc('autoConfigureBed', { confirmed: true });
+    list.hidden = false;
+    for (const step of report.steps ?? []) {
+      const li = document.createElement('li');
+      li.dataset.ok = String(step.ok);
+      const code = document.createElement('code');
+      code.textContent = step.name;
+      li.append(code, document.createTextNode(` — ${step.detail}`));
+      list.appendChild(li);
+    }
+    const failed = (report.steps ?? []).filter((step) => !step.ok);
+    if (failed.length === 0) {
+      status.textContent = 'готово: сетка снята, компенсация включена, записано в EEPROM';
+      toast('Стол сконфигурирован и сохранён в принтере', 'good');
+    } else {
+      status.textContent = `${failed.length} шаг(ов) не прошли — смотри список`;
+      toast(`Конфигурация неполная: ${failed[0].name} — ${failed[0].detail}`);
+    }
+  } catch (err) {
+    status.textContent = `ошибка: ${err.message}`;
+    toast(err.message);
+  } finally {
+    button.disabled = false;
+  }
 };
 
 $('runG29').onclick = async () => {

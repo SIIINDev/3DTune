@@ -131,7 +131,7 @@ async function main(): Promise<void> {
   }
 
   const webRoot = join(dirname(fileURLToPath(import.meta.url)), '..', 'web');
-  const printer = new Printer(config.limits);
+  const printer = new Printer({ ...config.limits, bedScrews: config.bedScrews });
 
   const server = startServer({
     printer,

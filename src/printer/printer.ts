@@ -12,6 +12,7 @@ import {
   checkHotendTarget,
   checkJog,
   type MachineLimits,
+  type MachineLimitOverrides,
 } from './limits.ts';
 import { analyzeMesh, MeshCollector, type MeshAnalysis } from './mesh.ts';
 
@@ -163,7 +164,7 @@ export class Printer extends EventEmitter {
   tempHistory: TempSample[] = [];
   log: { t: number; dir: 'rx' | 'tx' | 'sys'; text: string }[] = [];
 
-  constructor(limitOverrides?: Partial<MachineLimits>) {
+  constructor(limitOverrides?: MachineLimitOverrides) {
     super();
     this.limits = resolveLimits(limitOverrides);
   }
@@ -187,7 +188,7 @@ export class Printer extends EventEmitter {
       leveling: {
         on: this.levelingOn,
         mesh: this.mesh,
-        analysis: analyzeMesh(this.mesh, this.limits.bedSize.x, this.limits.bedSize.y),
+        analysis: analyzeMesh(this.mesh, this.limits.bedSize.x, this.limits.bedSize.y, this.limits.bedScrews),
       },
       busy: this.link?.busy ?? null,
       halted: this.link?.isHalted ?? false,
@@ -649,6 +650,69 @@ export class Printer extends EventEmitter {
     }
     if (!this.homed.x || !this.homed.y || !this.homed.z) await this.home('');
     return this.requireLink().send('G29');
+  }
+
+  /* One guided pass: probe the bed, switch compensation on, persist it, and read it back.
+     "Setting the offsets per point" IS the mesh — Marlin stores the grid and applies it, so there is
+     nothing separate to write. What this cannot do is fix the bed: compensation hides warp in
+     software, the screws are the only physical remedy, which is why the screw advice comes back with
+     the report. */
+  async autoConfigureBed(confirmed: boolean): Promise<{
+    steps: { name: string; ok: boolean; detail: string }[];
+    saved: SaveVerification | null;
+    analysis: MeshAnalysis | null;
+    levelingOn: boolean;
+  }> {
+    if (!confirmed) {
+      throw new SafetyError(
+        'needs_confirm',
+        'полная конфигурация стола гоняет все оси и пишет в EEPROM — нужно явное подтверждение',
+      );
+    }
+    if (this.caps['Z_PROBE'] === false) {
+      throw new SafetyError('no_probe', 'прошивка не сообщает о поддержке зонда — G29 недоступен');
+    }
+
+    const steps: { name: string; ok: boolean; detail: string }[] = [];
+    const record = (name: string, result: CommandResult) => {
+      steps.push({ name, ok: result.ok, detail: result.error ?? 'ok' });
+      return result.ok;
+    };
+
+    this.sys('bed auto-configuration started');
+    try {
+      await this.home('');
+      steps.push({ name: 'G28', ok: true, detail: 'все оси в нуле' });
+    } catch (err) {
+      steps.push({ name: 'G28', ok: false, detail: err instanceof Error ? err.message : String(err) });
+      return { steps, saved: null, analysis: null, levelingOn: this.levelingOn };
+    }
+    if (!record('G29', await this.requireLink().send('G29'))) {
+      return { steps, saved: null, analysis: null, levelingOn: this.levelingOn };
+    }
+    if (this.mesh === null) {
+      steps.push({ name: 'mesh', ok: false, detail: 'G29 прошёл, но сетку прочитать не удалось' });
+      return { steps, saved: null, analysis: null, levelingOn: this.levelingOn };
+    }
+    steps.push({ name: 'mesh', ok: true, detail: `${this.mesh.length}×${this.mesh[0]?.length ?? 0} точек` });
+
+    record('M420 S1', await this.setLeveling(true));
+
+    let saved: SaveVerification | null = null;
+    try {
+      saved = await this.saveToEeprom();
+      steps.push({
+        name: 'M500',
+        ok: saved.verified,
+        detail: saved.verified ? 'записано и перечитано' : saved.mismatches.join('; ') || 'проверка не сошлась',
+      });
+    } catch (err) {
+      steps.push({ name: 'M500', ok: false, detail: err instanceof Error ? err.message : String(err) });
+    }
+
+    const snapshot = this.snapshot();
+    this.sys(`bed auto-configuration finished: ${steps.filter((step) => step.ok).length}/${steps.length} шагов ok`);
+    return { steps, saved, analysis: snapshot.leveling.analysis, levelingOn: this.levelingOn };
   }
 
   async setLeveling(on: boolean): Promise<CommandResult> {

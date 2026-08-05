@@ -235,6 +235,11 @@ export function startServer(opts: ServerOptions): ServerHandle {
         audit('G28 + G29');
         return printer.runBedLeveling(Boolean(p['confirmed']));
 
+      case 'autoConfigureBed':
+        audit('G28 + G29 + M420 S1 + M500');
+        spendHeatToken(client);
+        return printer.autoConfigureBed(Boolean(p['confirmed']));
+
       case 'setLeveling':
         audit(Boolean(p['on']) ? 'on' : 'off');
         return printer.setLeveling(Boolean(p['on']));

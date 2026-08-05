@@ -1,9 +1,12 @@
+import { KP5L_BED_SCREWS, type BedScrewGeometry } from './mesh.ts';
+
 export type MachineLimits = {
   hotendMax: number;
   bedMax: number;
   confirmAboveHotend: number;
   minExtrudeTemp: number;
   bedSize: { x: number; y: number; z: number };
+  bedScrews: BedScrewGeometry;
   eepromSaveMinIntervalMs: number;
 };
 
@@ -18,12 +21,29 @@ export const KP5L_LIMITS: MachineLimits = {
   confirmAboveHotend: 250,
   minExtrudeTemp: 170,
   bedSize: { x: 300, y: 300, z: 330 },
+  bedScrews: KP5L_BED_SCREWS,
   eepromSaveMinIntervalMs: 3_000,
 };
 
-export function resolveLimits(overrides?: Partial<MachineLimits>): MachineLimits {
+/* Config supplies partial values at every level, so the override type has to be deep-partial —
+   Partial<MachineLimits> would demand a complete bedScrews object. */
+export type MachineLimitOverrides = Partial<Omit<MachineLimits, 'bedSize' | 'bedScrews'>> & {
+  bedSize?: Partial<MachineLimits['bedSize']>;
+  bedScrews?: Partial<BedScrewGeometry>;
+};
+
+export function resolveLimits(overrides?: MachineLimitOverrides): MachineLimits {
   if (!overrides) return KP5L_LIMITS;
-  const merged: MachineLimits = { ...KP5L_LIMITS, ...overrides, bedSize: { ...KP5L_LIMITS.bedSize, ...overrides.bedSize } };
+  const merged: MachineLimits = {
+    ...KP5L_LIMITS,
+    ...overrides,
+    bedSize: { ...KP5L_LIMITS.bedSize, ...overrides.bedSize },
+    bedScrews: { ...KP5L_LIMITS.bedScrews, ...overrides.bedScrews },
+  };
+  // A non-positive pitch would divide by zero and a huge inset would sample outside the bed.
+  if (!(merged.bedScrews.pitchMm > 0)) merged.bedScrews.pitchMm = KP5L_BED_SCREWS.pitchMm;
+  merged.bedScrews.inset = Math.min(Math.max(merged.bedScrews.inset, 0), Math.min(merged.bedSize.x, merged.bedSize.y) / 2 - 1);
+  if (!(merged.bedScrews.deadbandMm >= 0)) merged.bedScrews.deadbandMm = KP5L_BED_SCREWS.deadbandMm;
   merged.hotendMax = Math.min(merged.hotendMax, 300);
   merged.bedMax = Math.min(merged.bedMax, 150);
   return merged;

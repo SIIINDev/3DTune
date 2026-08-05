@@ -217,6 +217,22 @@
         <button id="commitBabystep" class="primary mini">Зафиксировать в M851</button>
       </div>
 
+      <h3>Автоконфигурация стола</h3>
+      <p class="note">
+        Один проход: <code>G28</code> → <code>G29</code> → включить компенсацию → <code>M500</code> →
+        контрольное чтение. Сетка и есть «оффсеты по точкам» — Marlin хранит её сам и применяет без ПК.
+        Компенсация прячет кривизну в софте; физически стол выправляют только винты.
+      </p>
+      <div class="row">
+        <button id="autoConfigureBed" class="primary">Прощупать стол и сохранить</button>
+        <span id="autoConfigureStatus" class="small muted"></span>
+      </div>
+      <ol id="autoConfigureSteps" class="steps" hidden></ol>
+
+      <h3>Винты стола: что крутить</h3>
+      <p class="note" id="screwAssumption"></p>
+      <div id="screwMap" class="screw-map"><span class="muted small">нет данных — прощупай стол</span></div>
+
       <h3>Сетка стола</h3>
       <div class="row">
         <button id="runG29" class="primary mini">G29 — снять сетку</button>

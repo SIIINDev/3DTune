@@ -14,6 +14,12 @@ export type AppConfig = {
     confirmAboveHotend?: number;
     minExtrudeTemp?: number;
   };
+  bedScrews?: {
+    inset?: number;
+    pitchMm?: number;
+    tighteningLowersBed?: boolean;
+    deadbandMm?: number;
+  };
   deadmanMinutes?: number;
 };
 
