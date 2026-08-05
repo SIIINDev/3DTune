@@ -213,6 +213,7 @@ function applyState(s) {
 
   renderHeater('hotend', s.temps.hotend);
   renderHeater('bed', s.temps.bed);
+  safe('chartSummary', () => updateChartSummary(s));
 
   $('posX').textContent = s.position.x.toFixed(2);
   $('posY').textContent = s.position.y.toFixed(2);
@@ -243,6 +244,18 @@ function safe(what, fn) {
   } catch (err) {
     console.error(`3DTune: render step "${what}" failed`, err);
   }
+}
+
+/* The canvas is role=img, so its data is unreachable without vision and a fixed aria-label would
+   also go stale. This text twin carries the same numbers the plot shows. */
+function updateChartSummary(s) {
+  const el = $('chartSummary');
+  if (!el) return;
+  const part = (name, h) =>
+    `${name}: ${h.current.toFixed(1)} градусов, ${h.target > 0 ? `цель ${h.target.toFixed(0)}` : 'нагрев выключен'}`;
+  const text = `${part('сопло', s.temps.hotend)}. ${part('стол', s.temps.bed)}.`;
+  el.textContent = text;
+  $('chart')?.setAttribute('aria-label', `График температур. ${text}`);
 }
 
 function renderHeater(which, h) {
@@ -342,6 +355,7 @@ function renderEndstops(map) {
     chip.dataset.state = triggered ? 'triggered' : 'open';
     const icon = document.createElement('span');
     icon.className = 'chip-icon';
+    icon.setAttribute('aria-hidden', 'true');
     icon.textContent = triggered ? '●' : '○';
     const label = document.createElement('span');
     label.textContent = `${k}: ${triggered ? 'сработал' : 'открыт'}`;
@@ -570,7 +584,11 @@ function toast(message, level = 'critical') {
   const el = $('toast');
   el.replaceChildren();
   el.dataset.level = level;
+  // A failure must interrupt; a confirmation must not.
+  el.setAttribute('role', level === 'good' ? 'status' : 'alert');
+  el.setAttribute('aria-live', level === 'good' ? 'polite' : 'assertive');
   const icon = document.createElement('span');
+  icon.setAttribute('aria-hidden', 'true');
   icon.textContent = level === 'good' ? '✓' : '⚠';
   const text = document.createElement('span');
   text.textContent = message;

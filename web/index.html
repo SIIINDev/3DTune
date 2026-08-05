@@ -55,6 +55,7 @@
 
     <div class="chart-wrap">
       <canvas id="chart" role="img" aria-label="График температур сопла и стола"></canvas>
+      <p id="chartSummary" class="visually-hidden" aria-live="off"></p>
       <div id="tooltip" class="tooltip" hidden></div>
     </div>
     <div class="legend">
@@ -119,15 +120,15 @@
     <div class="jog">
       <button data-jog="Y" data-sign="1" class="j-up">Y+</button>
       <button data-jog="X" data-sign="-1" class="j-left">X−</button>
-      <button data-home="XY" class="j-mid">⌂ XY</button>
+      <button data-home="XY" class="j-mid" aria-label="Home по осям X и Y"><span aria-hidden="true">⌂ </span>XY</button>
       <button data-jog="X" data-sign="1" class="j-right">X+</button>
       <button data-jog="Y" data-sign="-1" class="j-down">Y−</button>
       <button data-jog="Z" data-sign="1" class="j-zup">Z+</button>
-      <button data-home="Z" class="j-zmid">⌂ Z</button>
+      <button data-home="Z" class="j-zmid" aria-label="Home по оси Z"><span aria-hidden="true">⌂ </span>Z</button>
       <button data-jog="Z" data-sign="-1" class="j-zdown">Z−</button>
     </div>
     <div class="row">
-      <button data-home="" class="primary">⌂ Home всё</button>
+      <button data-home="" class="primary" aria-label="Home по всем осям"><span aria-hidden="true">⌂ </span>Home всё</button>
       <button id="motorsOff" class="ghost">Моторы выкл</button>
     </div>
     <div class="row">
@@ -205,7 +206,7 @@
 
       <h3>Живая подстройка Z (M290)</h3>
       <p class="note">Крути на горячем сопле по «бумажке», затем зафиксируй в M851.</p>
-      <div class="row">
+      <div class="row" role="group" aria-label="Живая подстройка Z, мм">
         <button data-babystep="-0.05" class="ghost">−0.05</button>
         <button data-babystep="-0.01" class="ghost">−0.01</button>
         <button data-babystep="0.01" class="ghost">+0.01</button>

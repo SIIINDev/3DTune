@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { deadmanMs, type AppConfig } from '../src/config.ts';
@@ -264,4 +265,44 @@ test('a nonexistent serial port fails with an actionable message and leaves no l
   const snap = printer.snapshot();
   assert.notEqual(snap.connection.status, 'connected');
   assert.ok(snap.connection.error, 'the failure reason must reach the UI state');
+});
+
+/* U5: an icon-only control with no aria-label is the regression that keeps coming back, because it
+   looks fine on screen. Checked statically so it fails in CI rather than under a screen reader. */
+test('every button in the markup has an accessible name', () => {
+  const html = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8');
+  const buttons = html.match(/<button\b[^>]*>[\s\S]*?<\/button>/g) ?? [];
+  assert.ok(buttons.length > 30, `expected the real markup, found ${buttons.length} buttons`);
+
+  const nameless: string[] = [];
+  for (const button of buttons) {
+    if (/aria-label\s*=\s*"[^"]+"/.test(button)) continue;
+    const inner = button.replace(/^<button\b[^>]*>/, '').replace(/<\/button>$/, '');
+    // A span marked aria-hidden contributes nothing to the accessible name.
+    const spoken = inner
+      .replace(/<span[^>]*aria-hidden\s*=\s*"true"[^>]*>[\s\S]*?<\/span>/g, '')
+      .replace(/<[^>]+>/g, '')
+      .trim();
+    if (spoken.length === 0) nameless.push(button.slice(0, 90));
+  }
+  assert.deepEqual(nameless, [], 'these buttons would be announced as an unlabelled button');
+});
+
+test('groups of bare-number buttons carry a group label that gives them meaning', () => {
+  const html = readFileSync(join(import.meta.dirname, '..', 'web', 'index.html'), 'utf8');
+  // Rows whose buttons are only digits/signs are meaningless alone: 185, 0.1, −0.05.
+  const groups = html.match(/<(?:div|span)\b[^>]*class="[^"]*(?:seg|row)[^"]*"[^>]*>[\s\S]*?<\/(?:div|span)>/g) ?? [];
+  const offenders: string[] = [];
+  for (const group of groups) {
+    const labels = group.match(/<button\b[^>]*>([\s\S]*?)<\/button>/g) ?? [];
+    if (labels.length < 2) continue;
+    const allNumeric = labels.every((b) => {
+      const text = b.replace(/<[^>]+>/g, '').trim();
+      return /^[−+\-]?\d+(?:[.,]\d+)?$/.test(text);
+    });
+    if (allNumeric && !/aria-label\s*=\s*"[^"]+"/.test(group.split('>')[0] + '>')) {
+      offenders.push(group.slice(0, 80));
+    }
+  }
+  assert.deepEqual(offenders, [], 'a row of bare numbers needs role=group with an aria-label');
 });
