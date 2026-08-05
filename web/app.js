@@ -872,11 +872,35 @@ $('commitBabystep').onclick = async () => {
   }
   const currentZ = state?.settings?.M851?.Z ?? 0;
   const newZ = Number((currentZ + babystepSum).toFixed(3));
-  if (!confirm(`M851 Z: ${currentZ} → ${newZ}\n\nПрименить? Сохранение в EEPROM — отдельной кнопкой.`)) return;
-  await call('probeOffset', { z: newZ }, `M851 Z установлен в ${newZ}`);
+  if (
+    !confirm(
+      `M851 Z: ${currentZ} → ${newZ}\n\n` +
+        'Значение сразу запишется в EEPROM принтера (M500) и будет перечитано для проверки — ' +
+        'оно переживёт выключение питания и будет работать без компьютера.\n\nПрименить?',
+    )
+  ) {
+    return;
+  }
+  const result = await call('probeOffset', { z: newZ });
   babystepSum = 0;
   $('babystepSum').textContent = '0.000';
+  reportPersisted(result, `M851 Z = ${newZ}`);
 };
+
+/* The whole point of committing an offset is that it survives a power cycle, so say plainly whether
+   the printer confirmed keeping it rather than just reporting that the command was accepted. */
+function reportPersisted(result, what) {
+  if (result?.persisted?.verified) {
+    toast(`${what} записан в EEPROM и подтверждён перечитыванием`, 'good');
+  } else if (result?.persisted) {
+    toast(
+      `${what} применён, но запись не подтвердилась: ${result.persisted.mismatches?.join('; ') || 'принтер не подтвердил'}. ` +
+        'После выключения питания значение может потеряться.',
+    );
+  } else {
+    toast(`${what} применён только до выключения питания`, 'good');
+  }
+}
 
 $('applyProbeOffset').onclick = async () => {
   const params = {};
@@ -884,8 +908,9 @@ $('applyProbeOffset').onclick = async () => {
     const input = $('probeOffsetFields').querySelector(`input[data-probe="${f}"]`);
     if (input && input.value !== '') params[f.toLowerCase()] = numeric(input.value);
   }
-  await call('probeOffset', params, 'M851 применён');
+  const result = await call('probeOffset', params);
   probeEdits = {};
+  reportPersisted(result, 'M851');
 };
 
 $('autoConfigureBed').onclick = async () => {

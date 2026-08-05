@@ -13,7 +13,10 @@
     "mock:lan": "node bin/3dtune.mjs --mock --host 0.0.0.0",
     "mock:chaos": "node bin/3dtune.mjs --mock --chaos",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --test-force-exit 'test/*.test.ts'"
+    "test": "node --test --test-force-exit 'test/*.test.ts'",
+    "build:win": "node scripts/build-portable.mjs --target win-x64 --zip",
+    "build:mac": "node scripts/build-portable.mjs --target darwin-arm64 --zip",
+    "doctor": "node bin/3dtune.mjs --doctor"
   },
   "dependencies": {
     "serialport": "^13.0.0",

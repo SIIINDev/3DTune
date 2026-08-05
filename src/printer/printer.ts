@@ -906,7 +906,10 @@ export class Printer extends EventEmitter {
     await this.requireLink().send(`M290 Z${delta}`);
   }
 
-  async setProbeOffset(offset: { x?: number; y?: number; z?: number }): Promise<CommandResult> {
+  async setProbeOffset(
+    offset: { x?: number; y?: number; z?: number },
+    persist = true,
+  ): Promise<CommandResult & { persisted: SaveVerification | null }> {
     const parts: string[] = [];
     for (const [axis, value] of [
       ['X', offset.x],
@@ -922,7 +925,18 @@ export class Printer extends EventEmitter {
     if (parts.length === 0) throw new SafetyError('bad_value', 'no probe offset values given');
     const res = await this.requireLink().send(`M851 ${parts.join(' ')}`);
     await this.refreshSettings();
-    return res;
+    if (!persist) return { ...res, persisted: null };
+
+    /* A Z-offset that vanishes on power-off is worse than none: the first layer looks right during
+       the session and wrong the next morning. Committing one is a deliberate act, so it saves and
+       then reads back to prove the printer actually kept it. */
+    const wait = this.limits.eepromSaveMinIntervalMs - (Date.now() - this.lastSaveAt);
+    if (wait > 0) await delay(wait);
+    const persisted = await this.saveToEeprom();
+    if (!persisted.verified) {
+      this.sys(`M851 применён, но подтвердить запись не удалось: ${persisted.mismatches.join('; ') || 'нет ответа'}`);
+    }
+    return { ...res, persisted };
   }
 
   async readEndstops(): Promise<void> {

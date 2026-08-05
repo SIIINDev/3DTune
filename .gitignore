@@ -11,3 +11,6 @@ reference/live/
 .DS_Store
 .vscode/
 .idea/
+
+# Build output — reproducible from scripts/build-portable.mjs
+dist/

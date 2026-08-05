@@ -408,8 +408,10 @@ export function startServer(opts: ServerOptions): ServerHandle {
         if (p['x'] !== undefined) offset.x = Number(p['x']);
         if (p['y'] !== undefined) offset.y = Number(p['y']);
         if (p['z'] !== undefined) offset.z = Number(p['z']);
-        audit(JSON.stringify(offset));
-        return printer.setProbeOffset(offset);
+        // Default to persisting: an offset lost on power-off is the failure this exists to prevent.
+        const persist = p['persist'] === undefined ? true : Boolean(p['persist']);
+        audit(`${JSON.stringify(offset)}${persist ? ' + M500' : ' (без записи)'}`);
+        return printer.setProbeOffset(offset, persist);
       }
 
       case 'pidAutotune': {

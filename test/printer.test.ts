@@ -139,8 +139,32 @@ test('babystep rejects zero and oversized steps', async () => {
 test('probe offset validates and round-trips through M503', async () => {
   await assert.rejects(() => printer.setProbeOffset({}), /no probe offset/);
   await assert.rejects(() => printer.setProbeOffset({ z: 500 }), /out of range/);
-  await printer.setProbeOffset({ z: -1.25 });
+  const applied = await printer.setProbeOffset({ z: -1.25 }, false);
   assert.equal(printer.snapshot().settings['M851']?.['Z'], -1.25);
+  assert.equal(applied.persisted, null, 'persist:false must not touch the EEPROM');
+});
+
+/* A Z-offset that disappears on power-off is the failure this feature exists to prevent: the first
+   layer looks right all session and wrong the next morning. */
+test('committing a probe offset writes it to EEPROM and proves the printer kept it', async () => {
+  const committed = await printer.setProbeOffset({ z: -1.9 });
+  assert.equal(printer.snapshot().settings['M851']?.['Z'], -1.9);
+  assert.ok(committed.persisted, 'a commit must attempt persistence by default');
+  assert.equal(committed.persisted?.verified, true, committed.persisted?.mismatches.join('; '));
+  assert.deepEqual(committed.persisted?.mismatches, []);
+  assert.equal(printer.snapshot().persistence.dirty, false, 'nothing may remain unsaved after a commit');
+
+  // Survives a board reset, which is the closest the simulator gets to pulling the plug.
+  await printer.gcode('M503');
+  assert.equal(printer.snapshot().settings['M851']?.['Z'], -1.9);
+});
+
+test('two commits in a row are not blocked by the EEPROM rate limiter', async () => {
+  // The limiter protects flash from bursts, but a deliberate second commit must not just fail.
+  await printer.setProbeOffset({ z: -2.0 });
+  const second = await printer.setProbeOffset({ z: -2.05 });
+  assert.equal(second.persisted?.verified, true, 'the commit should wait out the cooldown, not throw');
+  assert.equal(printer.snapshot().settings['M851']?.['Z'], -2.05);
 });
 
 test('G29 mesh is captured without swallowing the column-header row', async () => {
@@ -181,13 +205,26 @@ test('endstops are merged from the multi-line M119 report', async () => {
 });
 
 test('M500 is rate limited to protect the flash-emulated EEPROM', async () => {
-  const first = await printer.saveToEeprom();
-  assert.equal(first.ok, true);
-  assert.equal(first.verified, true, first.mismatches.join('; '));
-  assert.deepEqual(first.mismatches, []);
-  assert.equal(printer.snapshot().eepromSaves, 1);
-  assert.equal(printer.snapshot().persistence.dirty, false);
-  assert.equal(printer.snapshot().persistence.verified, true);
+  /* Establish the precondition instead of assuming it: an earlier test may have saved, and the
+     limiter is deliberately stateful. Waiting out the cooldown keeps this test about the limiter
+     rather than about test ordering. */
+  await waitFor(
+    async () => {
+      try {
+        await printer.saveToEeprom();
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    'the EEPROM cooldown to clear so a save can succeed',
+  );
+  const before = printer.snapshot();
+  assert.equal(before.persistence.dirty, false);
+  assert.equal(before.persistence.verified, true);
+  assert.ok(before.eepromSaves >= 1, 'a successful save must be counted');
+
+  // Immediately again: this is the behaviour under test.
   await assert.rejects(() => printer.saveToEeprom(), /erase budget/);
 });
 

@@ -2,14 +2,14 @@
    is generous and flaky when the machine is loaded. Wait for the condition instead: the test
    proceeds the moment it holds, and fails with a useful message if it never does. */
 export async function waitFor(
-  predicate: () => boolean,
+  predicate: () => boolean | Promise<boolean>,
   what: string,
   timeoutMs = 10_000,
   pollMs = 20,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    if (predicate()) return;
+    if (await predicate()) return;
     if (Date.now() >= deadline) throw new Error(`timed out after ${timeoutMs} ms waiting for: ${what}`);
     await new Promise((r) => setTimeout(r, pollMs));
   }

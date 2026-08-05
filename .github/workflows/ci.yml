@@ -26,3 +26,7 @@ jobs:
       - run: node --check web/app.js
       - run: node --check web/mesh3d.js
       - run: node --check web/chart.js
+      # The distributable is what the owner actually runs; a bundle that cannot be assembled is a
+      # broken release, not a broken test.
+      - run: node scripts/build-portable.mjs --target win-x64
+      - run: node scripts/build-portable.mjs --target darwin-arm64
