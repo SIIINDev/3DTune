@@ -8,12 +8,12 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node src/index.ts",
-    "mock": "node src/index.ts --mock",
-    "mock:lan": "node src/index.ts --mock --host 0.0.0.0",
-    "mock:chaos": "node src/index.ts --mock --chaos",
+    "start": "node bin/3dtune.mjs",
+    "mock": "node bin/3dtune.mjs --mock",
+    "mock:lan": "node bin/3dtune.mjs --mock --host 0.0.0.0",
+    "mock:chaos": "node bin/3dtune.mjs --mock --chaos",
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'test/*.test.ts'"
+    "test": "node --test --test-force-exit 'test/*.test.ts'"
   },
   "dependencies": {
     "serialport": "^13.0.0",

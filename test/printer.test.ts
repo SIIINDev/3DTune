@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
-import { Printer } from '../src/printer/printer.ts';
+import { calculateESteps, Printer } from '../src/printer/printer.ts';
 
 const printer = new Printer();
 
@@ -20,6 +20,7 @@ test('handshake fills firmware, capabilities and typed settings', () => {
   assert.equal(s.connection.capsReported, true);
   assert.equal(s.connection.caps['EEPROM'], true);
   assert.equal(s.connection.caps['EMERGENCY_PARSER'], false);
+  assert.equal(s.persistence.dirty, false);
 });
 
 test('M503 is parsed into per-code numeric parameters', () => {
@@ -56,6 +57,18 @@ test('jog is refused before homing, then allowed', async () => {
 
 test('cold extrude is refused', async () => {
   await assert.rejects(() => printer.jog('E', 5), /at least 170/);
+  await assert.rejects(() => printer.extrudeForESteps(100), /at least 170/);
+});
+
+test('E-steps calculation uses the measured filament distance', () => {
+  assert.deepEqual(calculateESteps(768, 100, 96), {
+    previous: 768,
+    requested: 100,
+    measured: 96,
+    next: 800,
+  });
+  assert.throws(() => calculateESteps(768, 100, 0), /greater than 0/);
+  assert.throws(() => calculateESteps(768, 100, 20), /more than 2×/);
 });
 
 test('hotend targets are clamped and gated on confirmation', async () => {
@@ -73,6 +86,46 @@ test('bed targets are clamped', async () => {
   await printer.setBedTarget(0);
 });
 
+test('automatic cooling acts only when M27 confirms the printer is idle', async () => {
+  const idle = new Printer();
+  const printing = new Printer();
+  const unknown = new Printer();
+  await Promise.all([
+    idle.connect({ kind: 'mock', sdPrintStatus: 'idle' }),
+    printing.connect({ kind: 'mock', sdPrintStatus: 'printing' }),
+    unknown.connect({ kind: 'mock', sdPrintStatus: 'unknown' }),
+  ]);
+
+  try {
+    await Promise.all([
+      idle.setHotendTarget(200),
+      idle.setBedTarget(60),
+      printing.setHotendTarget(200),
+      unknown.setHotendTarget(200),
+    ]);
+
+    const [idleDecision, printingDecision, unknownDecision] = await Promise.all([
+      idle.coolIfIdle('test idle'),
+      printing.coolIfIdle('test SD print'),
+      unknown.coolIfIdle('test unknown status'),
+    ]);
+
+    assert.deepEqual(idleDecision, { action: 'cooled', sdPrintStatus: 'idle', reason: 'test idle' });
+    assert.equal(idle.snapshot().temps.hotend.target, 0);
+    assert.equal(idle.snapshot().temps.bed.target, 0);
+
+    assert.equal(printingDecision.action, 'left_on');
+    assert.equal(printingDecision.sdPrintStatus, 'printing');
+    assert.equal(printing.snapshot().temps.hotend.target, 200);
+
+    assert.equal(unknownDecision.action, 'left_on');
+    assert.equal(unknownDecision.sdPrintStatus, 'unknown');
+    assert.equal(unknown.snapshot().temps.hotend.target, 200);
+  } finally {
+    await Promise.all([idle.disconnect(), printing.disconnect(), unknown.disconnect()]);
+  }
+});
+
 test('babystep rejects zero and oversized steps', async () => {
   await assert.rejects(() => printer.babystepZ(0), /at most 0.2/);
   await assert.rejects(() => printer.babystepZ(0.5), /at most 0.2/);
@@ -87,7 +140,7 @@ test('probe offset validates and round-trips through M503', async () => {
 });
 
 test('G29 mesh is captured without swallowing the column-header row', async () => {
-  await printer.gcode('G29');
+  await printer.runBedLeveling(true);
   await new Promise((r) => setTimeout(r, 300));
   const { leveling } = printer.snapshot();
   assert.ok(leveling.mesh, 'mesh should be captured');
@@ -97,6 +150,18 @@ test('G29 mesh is captured without swallowing the column-header row', async () =
     for (const v of row) assert.ok(Number.isFinite(v) && Math.abs(v) < 1);
   }
   assert.equal(leveling.on, true, 'Marlin enables compensation after G29');
+  assert.equal(printer.snapshot().persistence.dirty, true, 'a new mesh must require M500');
+});
+
+test('raw terminal cannot bypass heater, motion or EEPROM safety paths', async () => {
+  assert.throws(() => printer.gcode('M104 S250'), /сыром терминале/);
+  assert.throws(() => printer.gcode('G1 X100'), /сыром терминале/);
+  assert.throws(() => printer.gcode('M500'), /сыром терминале/);
+  assert.throws(() => printer.gcode('M115\nM104 S250'), /сыром терминале/);
+  const diagnostic = await printer.gcode('M115');
+  assert.equal(diagnostic.ok, true);
+  await assert.rejects(() => printer.applySettings(['M92 E800', 'M104 S250']), /not allowed/);
+  await assert.rejects(() => printer.applySettings(['M92 E800\nM104 S250']), /not allowed/);
 });
 
 test('endstops are merged from the multi-line M119 report', async () => {
@@ -111,7 +176,11 @@ test('endstops are merged from the multi-line M119 report', async () => {
 test('M500 is rate limited to protect the flash-emulated EEPROM', async () => {
   const first = await printer.saveToEeprom();
   assert.equal(first.ok, true);
+  assert.equal(first.verified, true, first.mismatches.join('; '));
+  assert.deepEqual(first.mismatches, []);
   assert.equal(printer.snapshot().eepromSaves, 1);
+  assert.equal(printer.snapshot().persistence.dirty, false);
+  assert.equal(printer.snapshot().persistence.verified, true);
   await assert.rejects(() => printer.saveToEeprom(), /erase budget/);
 });
 
@@ -120,6 +189,17 @@ test('applying a batch of settings updates them in one refresh', async () => {
   const { settings } = printer.snapshot();
   assert.equal(settings['M92']?.['E'], 770);
   assert.equal(settings['M900']?.['K'], 0.05);
+  assert.equal(printer.snapshot().persistence.dirty, true);
+});
+
+test('E-steps calibration applies M92 without saving EEPROM', async () => {
+  await printer.applySettings(['M92 E770']);
+  const savesBefore = printer.snapshot().eepromSaves;
+  const result = await printer.calibrateESteps(100, 96.25);
+  assert.equal(result.previous, 770);
+  assert.equal(result.next, 800);
+  assert.equal(printer.snapshot().settings['M92']?.['E'], 800);
+  assert.equal(printer.snapshot().eepromSaves, savesBefore);
 });
 
 test('bed PID is refused and warned about when the firmware has PIDTEMPBED off', async () => {
@@ -163,6 +243,46 @@ test('handshake survives a noisy link and still learns the firmware', async () =
   } finally {
     await noisy.disconnect();
   }
+});
+
+test('unexpected transport loss reconnects and repeats the full handshake', async () => {
+  const reconnecting = new Printer();
+  await reconnecting.connect({ kind: 'mock' });
+  await reconnecting.home('X');
+  assert.equal(reconnecting.snapshot().homed.x, true);
+
+  await reconnecting.simulateTransportLoss();
+  assert.equal(reconnecting.snapshot().connection.status, 'error');
+
+  const deadline = Date.now() + 4_000;
+  while (reconnecting.snapshot().connection.status !== 'connected' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  const restored = reconnecting.snapshot();
+  assert.equal(restored.connection.status, 'connected');
+  assert.equal(restored.homed.x, false, 'reconnect must not retain trusted home state');
+  assert.ok(restored.settings['M92'], 'full M503 handshake must run after reconnect');
+  await reconnecting.disconnect();
+});
+
+test('board reset inside a live USB session clears home trust and repeats the handshake', async () => {
+  const resetting = new Printer();
+  await resetting.connect({ kind: 'mock' });
+  await resetting.home('X');
+  assert.equal(resetting.snapshot().homed.x, true);
+
+  resetting.simulateBoardReset();
+  const deadline = Date.now() + 2_000;
+  while (resetting.snapshot().connection.status !== 'connected' && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+
+  const restored = resetting.snapshot();
+  assert.equal(restored.connection.status, 'connected');
+  assert.equal(restored.homed.x, false);
+  assert.ok(restored.settings['M92'], 'M503 must be reread after the board reset');
+  assert.ok(resetting.log.some((entry) => /state restored after board reset/.test(entry.text)));
+  await resetting.disconnect();
 });
 
 test('E-Stop tells the user when there is no link instead of silently doing nothing', async () => {

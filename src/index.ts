@@ -1,7 +1,7 @@
 import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CONFIG_PATH, loadConfig, saveConfig } from './config.ts';
+import { CONFIG_PATH, deadmanMs, loadConfig, rotateToken, saveConfig } from './config.ts';
 import { Printer } from './printer/printer.ts';
 import { startServer } from './server/server.ts';
 import { listPorts } from './transport/serial.ts';
@@ -16,6 +16,7 @@ type Args = {
   autoconnect: boolean;
   listPorts: boolean;
   help: boolean;
+  rotateToken: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -28,6 +29,7 @@ function parseArgs(argv: string[]): Args {
     autoconnect: false,
     listPorts: false,
     help: false,
+    rotateToken: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -60,6 +62,9 @@ function parseArgs(argv: string[]): Args {
       case '-h':
         args.help = true;
         break;
+      case '--rotate-token':
+        args.rotateToken = true;
+        break;
     }
   }
   return args;
@@ -68,7 +73,7 @@ function parseArgs(argv: string[]): Args {
 function usage(): void {
   process.stdout.write(`3DTune host
 
-  node src/index.ts [options]
+  node bin/3dtune.mjs [options]
 
   --mock              run against the built-in Marlin simulator (no printer needed)
   --chaos             simulator injects line noise to exercise the Resend path
@@ -77,6 +82,7 @@ function usage(): void {
   --host <addr>       bind address (default 127.0.0.1; use 0.0.0.0 to expose on the LAN)
   --port <n>          http port (default 8420, persisted in config)
   --list-ports        print detected serial ports and exit
+  --rotate-token      generate a new access token and invalidate existing browser sessions
   --help              this text
 `);
 }
@@ -114,7 +120,11 @@ async function main(): Promise<void> {
     return;
   }
 
-  const config = loadConfig();
+  let config = loadConfig();
+  if (args.rotateToken) {
+    config = rotateToken(config);
+    process.stdout.write('access token rotated; old browser links are now invalid\n');
+  }
   if (args.port > 0 && args.port !== config.port) {
     config.port = args.port;
     saveConfig(config);
@@ -131,7 +141,17 @@ async function main(): Promise<void> {
     webRoot,
     mock: args.mock,
     chaos: args.chaos,
+    deadmanMs: deadmanMs(config),
+    onSafetyEvent: (message) => process.stderr.write(`${message}\n`),
   });
+  try {
+    await server.ready;
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    await server.close();
+    process.exitCode = 1;
+    return;
+  }
 
   const localUrl = `http://127.0.0.1:${config.port}/#t=${config.token}`;
   process.stdout.write(`\n3DTune host listening on ${args.host}:${config.port}\n`);
@@ -149,6 +169,12 @@ async function main(): Promise<void> {
   } else {
     process.stdout.write('  (loopback only — pass --host 0.0.0.0 to reach it from other devices)\n');
   }
+  const effectiveDeadman = deadmanMs(config) ?? 30 * 60_000;
+  process.stdout.write(
+    effectiveDeadman > 0
+      ? `  idle policy: after ${Math.round(effectiveDeadman / 60_000)} min with no client, M27 decides whether to cool\n`
+      : '  idle policy: dead-man timer disabled by config — heaters are never turned off automatically\n',
+  );
   process.stdout.write(`  token stored in ${CONFIG_PATH}\n\n`);
 
   if (args.autoconnect) {
@@ -174,8 +200,24 @@ async function main(): Promise<void> {
     }
   }
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     process.stdout.write('\nshutting down\n');
+    const decision = await printer.coolIfIdle('server shutdown').catch((err) => {
+      process.stderr.write(
+        `WARNING: could not verify/cool heaters before shutdown: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      return null;
+    });
+    if (decision?.action === 'cooled') {
+      process.stdout.write('idle printer confirmed; heaters turned off\n');
+    } else if (decision?.action === 'left_on') {
+      process.stderr.write(
+        `WARNING: heaters left on; SD print status is ${decision.sdPrintStatus}. Check the printer manually.\n`,
+      );
+    }
     await printer.disconnect().catch(() => undefined);
     await server.close();
     process.exit(0);

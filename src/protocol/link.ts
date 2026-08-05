@@ -164,9 +164,20 @@ export class Link extends EventEmitter {
 
   private transmit(p: Pending): void {
     this.clearTimers(p);
-    this.transport.write(`${p.framed}\n`);
-    this.emit('sent', p.framed);
+    // The timer must exist before the write: a synchronous transport can deliver the whole reply
+    // inside write(), completing the command before a later-assigned timer could ever be cleared.
     p.timer = setTimeout(() => this.onTimeout(p), p.timeoutMs);
+    try {
+      this.transport.write(`${p.framed}\n`);
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      this.clearTimers(p);
+      if (this.inFlight === p) this.inFlight = null;
+      p.resolve({ ok: false, lines: p.lines, error: `write failed: ${error.message}` });
+      this.fail(error);
+      return;
+    }
+    this.emit('sent', p.framed);
   }
 
   private onTimeout(p: Pending): void {

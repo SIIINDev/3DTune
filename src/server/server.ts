@@ -15,6 +15,14 @@ export type ServerOptions = {
   webRoot: string;
   mock: boolean;
   chaos: boolean;
+  deadmanMs?: number;
+  onSafetyEvent?: (message: string) => void;
+};
+
+export type ServerHandle = {
+  ready: Promise<void>;
+  close: () => Promise<void>;
+  port: () => number;
 };
 
 type Client = { id: number; ws: WebSocket; label: string; ip: string; heatTokens: number };
@@ -32,6 +40,11 @@ const MIME: Record<string, string> = {
 
 const HEAT_BUCKET_MAX = 8;
 
+/* Owner decision: 30 minutes with no connected client, then the print-aware M27 check.
+   Long enough to walk away from a soak, short enough that a forgotten heater does not sit for hours.
+   Override with deadmanMinutes in ~/.3dtune/config.json; 0 disables the timer entirely. */
+export const DEADMAN_DEFAULT_MS = 30 * 60_000;
+
 function assetVersion(webRoot: string): string {
   let newest = 0;
   for (const entry of readdirSync(webRoot, { withFileTypes: true })) {
@@ -41,15 +54,19 @@ function assetVersion(webRoot: string): string {
   return Math.floor(newest).toString(36);
 }
 
-export function startServer(opts: ServerOptions): { close: () => Promise<void>; port: () => number } {
+export function startServer(opts: ServerOptions): ServerHandle {
   const { printer, token, webRoot } = opts;
   const clients = new Map<number, Client>();
   let nextClientId = 1;
+  let hadClient = false;
+  let closing = false;
+  let deadmanTimer: NodeJS.Timeout | undefined;
+  const deadmanMs = opts.deadmanMs ?? DEADMAN_DEFAULT_MS;
 
   const http = createServer((req, res) => handleHttp(req, res, webRoot, opts.mock, opts.chaos));
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
-  setInterval(() => {
+  const heatRefill = setInterval(() => {
     for (const c of clients.values()) c.heatTokens = Math.min(HEAT_BUCKET_MAX, c.heatTokens + 1);
   }, 5_000).unref();
 
@@ -64,6 +81,9 @@ export function startServer(opts: ServerOptions): { close: () => Promise<void>; 
   });
 
   function onConnection(ws: WebSocket, req: IncomingMessage): void {
+    hadClient = true;
+    if (deadmanTimer) clearTimeout(deadmanTimer);
+    deadmanTimer = undefined;
     const id = nextClientId++;
     const ip = (req.socket.remoteAddress ?? '?').replace('::ffff:', '');
     const client: Client = { id, ws, label: `device-${id}`, ip, heatTokens: HEAT_BUCKET_MAX };
@@ -89,11 +109,40 @@ export function startServer(opts: ServerOptions): { close: () => Promise<void>; 
       }
       void handleMessage(client, msg);
     });
+    // Protocol errors such as maxPayload violations close only this client, never the host process.
+    ws.on('error', () => undefined);
 
     ws.on('close', () => {
       clients.delete(id);
       broadcastClients();
+      if (clients.size === 0) scheduleDeadman();
     });
+  }
+
+  function scheduleDeadman(): void {
+    if (closing || !hadClient || clients.size > 0 || deadmanMs <= 0 || deadmanTimer) return;
+    deadmanTimer = setTimeout(() => {
+      deadmanTimer = undefined;
+      if (closing || clients.size > 0) return;
+      void printer
+        .coolIfIdle(`no web clients for ${Math.round(deadmanMs / 1000)}s`)
+        .then((decision) => {
+          if (decision.action === 'cooled') {
+            opts.onSafetyEvent?.('3DTune: no clients remain; idle printer heaters were turned off');
+          } else if (decision.action === 'left_on') {
+            opts.onSafetyEvent?.(
+              `3DTune WARNING: heaters remain on because SD status is ${decision.sdPrintStatus}`,
+            );
+          }
+          // Keep watching while nobody is connected: heating may begin later from the printer/SD.
+          scheduleDeadman();
+        })
+        .catch((err) => {
+          opts.onSafetyEvent?.(`3DTune WARNING: dead-man check failed: ${String(err)}`);
+          scheduleDeadman();
+        });
+    }, deadmanMs);
+    deadmanTimer.unref();
   }
 
   async function handleMessage(client: Client, msg: unknown): Promise<void> {
@@ -109,8 +158,20 @@ export function startServer(opts: ServerOptions): { close: () => Promise<void>; 
 
     if (m['t'] !== 'rpc') return;
     const id = m['id'];
-    const method = String(m['method'] ?? '');
-    const params = (m['params'] ?? {}) as Record<string, unknown>;
+    const method = typeof m['method'] === 'string' ? m['method'] : '';
+    const rawParams = m['params'] ?? {};
+    if (
+      (typeof id !== 'number' && typeof id !== 'string') ||
+      method.length === 0 ||
+      method.length > 64 ||
+      typeof rawParams !== 'object' ||
+      rawParams === null ||
+      Array.isArray(rawParams)
+    ) {
+      send(client.ws, { t: 'reply', id, ok: false, code: 'invalid_request', error: 'invalid RPC message shape' });
+      return;
+    }
+    const params = rawParams as Record<string, unknown>;
 
     try {
       const result = await dispatch(client, method, params);
@@ -161,6 +222,23 @@ export function startServer(opts: ServerOptions): { close: () => Promise<void>; 
         return printer.gcode(cmd);
       }
 
+      case 'probeAction': {
+        const action = String(p['action'] ?? '');
+        if (action !== 'deploy' && action !== 'stow' && action !== 'selftest') {
+          throw new SafetyError('bad_value', 'unknown probe action');
+        }
+        audit(action);
+        return printer.probeAction(action);
+      }
+
+      case 'runBedLeveling':
+        audit('G28 + G29');
+        return printer.runBedLeveling(Boolean(p['confirmed']));
+
+      case 'setLeveling':
+        audit(Boolean(p['on']) ? 'on' : 'off');
+        return printer.setLeveling(Boolean(p['on']));
+
       case 'estop':
         audit();
         printer.estop();
@@ -193,6 +271,21 @@ export function startServer(opts: ServerOptions): { close: () => Promise<void>; 
           p['feedrate'] === undefined ? undefined : Number(p['feedrate']),
         );
         return { ok: true };
+
+      case 'eStepsExtrude': {
+        const distance = Number(p['distance']);
+        const feedrate = Number(p['feedrate'] ?? 120);
+        audit(`${distance}mm F${feedrate}`);
+        await printer.extrudeForESteps(distance, feedrate);
+        return { ok: true };
+      }
+
+      case 'calibrateESteps': {
+        const requested = Number(p['requested']);
+        const measured = Number(p['measured']);
+        audit(`requested ${requested}mm, measured ${measured}mm`);
+        return printer.calibrateESteps(requested, measured);
+      }
 
       case 'home':
         audit(String(p['axes'] ?? 'all'));
@@ -278,24 +371,52 @@ export function startServer(opts: ServerOptions): { close: () => Promise<void>; 
     }
   }
 
-  printer.on('state', (state) => broadcast({ t: 'state', state }));
-  printer.on('temp', (sample) => broadcast({ t: 'temp', sample }));
-  printer.on('log', (entry) => broadcast({ t: 'log', entry }));
-  printer.on('event', (event) => broadcast({ t: 'event', event }));
+  const onState = (state: unknown) => broadcast({ t: 'state', state });
+  const onTemp = (sample: unknown) => broadcast({ t: 'temp', sample });
+  const onLog = (entry: unknown) => broadcast({ t: 'log', entry });
+  const onEvent = (event: unknown) => broadcast({ t: 'event', event });
+  printer.on('state', onState);
+  printer.on('temp', onTemp);
+  printer.on('log', onLog);
+  printer.on('event', onEvent);
 
+  const ready = new Promise<void>((resolve, reject) => {
+    http.once('listening', resolve);
+    http.once('error', (err: NodeJS.ErrnoException) => {
+      const message = err.code === 'EADDRINUSE'
+        ? `HTTP port ${opts.port} is already in use — stop the other 3DTune instance or choose --port`
+        : `cannot listen on ${opts.host}:${opts.port}: ${err.message}`;
+      reject(new Error(message));
+    });
+  });
   http.listen(opts.port, opts.host);
 
   return {
+    ready,
     port: () => {
       const addr = http.address();
       return addr !== null && typeof addr === 'object' ? addr.port : opts.port;
     },
-    close: () =>
-      new Promise<void>((resolve) => {
-        for (const c of clients.values()) c.ws.close();
-        wss.close();
+    close: () => {
+      closing = true;
+      if (deadmanTimer) clearTimeout(deadmanTimer);
+      deadmanTimer = undefined;
+      clearInterval(heatRefill);
+      printer.off('state', onState);
+      printer.off('temp', onTemp);
+      printer.off('log', onLog);
+      printer.off('event', onEvent);
+      for (const c of clients.values()) c.ws.terminate();
+      clients.clear();
+      wss.close();
+      return new Promise<void>((resolve) => {
+        if (!http.listening) {
+          resolve();
+          return;
+        }
         http.close(() => resolve());
-      }),
+      });
+    },
   };
 }
 

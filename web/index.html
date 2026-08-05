@@ -101,6 +101,7 @@
       <dt>Машина</dt><dd id="fwMachine">—</dd>
       <dt>Очередь</dt><dd id="queueDepth">0</dd>
       <dt>Записей M500</dt><dd id="saveCount">0</dd>
+      <dt>Хранение</dt><dd id="persistenceState">—</dd>
     </dl>
   </section>
 
@@ -150,6 +151,39 @@
     <div id="endstops" class="chips"><span class="muted small">нет данных</span></div>
   </section>
 
+  <section class="card" id="cardESteps">
+    <h2>Калибровка E-steps</h2>
+    <p class="note">
+      Нагрей сопло, отмерь филамент и подай известную длину. Введи, сколько миллиметров
+      принтер протянул фактически — мастер рассчитает новое <code>M92 E</code>.
+    </p>
+    <dl class="kv calibration-kv">
+      <dt>Текущее M92 E</dt><dd id="eStepsCurrent">—</dd>
+      <dt>Расчётное M92 E</dt><dd id="eStepsPreview">—</dd>
+    </dl>
+    <h3>1. Контрольная подача</h3>
+    <div class="row">
+      <label>задано, мм <input id="eStepsRequested" type="number" value="100" min="20" max="200" step="1"></label>
+      <label>скорость, мм/мин <input id="eStepsFeedrate" type="number" value="120" min="30" max="300" step="10"></label>
+    </div>
+    <div class="row">
+      <button id="eStepsExtrude" class="primary">Подать филамент</button>
+    </div>
+    <h3>2. Замер и применение</h3>
+    <div class="row">
+      <label>протянуто фактически, мм
+        <input id="eStepsMeasured" type="number" min="1" max="300" step="0.1" placeholder="например 96.2">
+      </label>
+    </div>
+    <div class="row">
+      <button id="eStepsApply" class="primary">Применить M92 E</button>
+      <button id="eStepsSave" class="ghost">Сохранить M500</button>
+    </div>
+    <p id="eStepsStatus" class="note" aria-live="polite">
+      Применение не пишет EEPROM; для постоянного результата нажми M500 отдельно.
+    </p>
+  </section>
+
   <section class="card" id="cardProbe">
     <h2>Зонд и сетка стола</h2>
     <p id="probeUnavailable" class="note" hidden>
@@ -158,9 +192,9 @@
     </p>
     <div id="probeControls">
       <div class="row">
-        <button data-gcode="M280 P0 S10" class="ghost mini">Выпустить щуп</button>
-        <button data-gcode="M280 P0 S90" class="ghost mini">Убрать щуп</button>
-        <button data-gcode="M280 P0 S120" class="ghost mini">Самотест</button>
+        <button data-probe-action="deploy" class="ghost mini">Выпустить щуп</button>
+        <button data-probe-action="stow" class="ghost mini">Убрать щуп</button>
+        <button data-probe-action="selftest" class="ghost mini">Самотест</button>
       </div>
 
       <h3>Offset зонда (M851)</h3>
@@ -185,17 +219,34 @@
       <h3>Сетка стола</h3>
       <div class="row">
         <button id="runG29" class="primary mini">G29 — снять сетку</button>
-        <button data-gcode="M420 S1" class="ghost mini">Включить</button>
-        <button data-gcode="M420 S0" class="ghost mini">Выключить</button>
+        <button data-leveling="on" class="ghost mini">Включить</button>
+        <button data-leveling="off" class="ghost mini">Выключить</button>
         <span id="levelingState" class="small muted"></span>
       </div>
+      <div class="row">
+        <div class="seg" id="meshMode" role="group" aria-label="Представление сетки стола">
+          <button data-mode="raw" aria-pressed="true">Исходная</button>
+          <button data-mode="curvature" aria-pressed="false">Кривизна</button>
+        </div>
+      </div>
+      <dl id="meshStats" class="mesh-stats" hidden>
+        <div><dt>Общий разброс</dt><dd id="meshRange">—</dd></div>
+        <div><dt>Наклон X</dt><dd id="meshTiltX">—</dd></div>
+        <div><dt>Наклон Y</dt><dd id="meshTiltY">—</dd></div>
+        <div><dt>Макс. кривизна</dt><dd id="meshWarp">—</dd></div>
+        <div><dt>Центр − углы</dt><dd id="meshCenter">—</dd></div>
+      </dl>
       <div id="mesh" class="mesh"><span class="muted small">нет данных — выполни G29</span></div>
       <div id="meshScale" class="scale" hidden>
         <span id="meshMin">—</span>
         <span class="scale-bar" aria-hidden="true"></span>
         <span id="meshMax">—</span>
       </div>
-      <p class="note" style="margin-top:8px">Синий — ниже плоскости, красный — выше. Значения в мм.</p>
+      <canvas id="mesh3d" class="mesh-3d" role="img" aria-label="Интерактивная трёхмерная поверхность сетки стола"></canvas>
+      <p id="meshInterpretation" class="note" style="margin-top:8px">
+        Синий — ниже плоскости, красный — выше. Значения в мм.
+      </p>
+      <p class="note">3D-поверхность можно вращать перетаскиванием и масштабировать колёсиком.</p>
     </div>
   </section>
 

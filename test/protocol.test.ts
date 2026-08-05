@@ -90,6 +90,36 @@ test('parses standalone auto-report temperature line', () => {
   assert.equal(p.kind, 'temp');
 });
 
+test('parses multiple hotends and chamber temperature independently', () => {
+  const p = parseLine('T0:201.5 /210 T1:184.2 /190 B:59.8 /60 C:35.4 /0 @0:90 @1:45 B@:30 C@:0');
+  assert.equal(p.kind, 'temp');
+  if (p.kind !== 'temp') throw new Error('expected temp report');
+  assert.equal(p.temps.hotends.length, 2);
+  assert.equal(p.temps.hotends[0]?.current, 201.5);
+  assert.equal(p.temps.hotends[0]?.power, 90);
+  assert.equal(p.temps.hotends[1]?.target, 190);
+  assert.equal(p.temps.hotends[1]?.power, 45);
+  assert.equal(p.temps.chamber?.current, 35.4);
+});
+
+test('parser survives deterministic fuzz input without throwing or returning an invalid kind', () => {
+  const kinds = new Set([
+    'ok', 'resend', 'busy', 'error', 'temp', 'position', 'endstops', 'cap', 'firmware', 'start', 'action', 'echo', 'other',
+  ]);
+  let seed = 0x3d7a11;
+  const next = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed;
+  };
+  for (let sample = 0; sample < 5_000; sample++) {
+    const length = next() % 240;
+    let line = '';
+    for (let i = 0; i < length; i++) line += String.fromCharCode(next() % 128);
+    const parsed = parseLine(line);
+    assert.ok(kinds.has(parsed.kind), `invalid kind for fuzz sample ${sample}`);
+  }
+});
+
 test('parses resend, busy, fatal and resend-triggering errors', () => {
   assert.deepEqual(parseLine('Resend: 17'), { kind: 'resend', lineNo: 17 });
   assert.deepEqual(parseLine('rs 17'), { kind: 'resend', lineNo: 17 });

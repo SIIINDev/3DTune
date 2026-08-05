@@ -36,6 +36,43 @@ export function normalizePortPath(path: string): string {
   return path;
 }
 
+/* serialport surfaces the OS error nearly verbatim, which is accurate but not actionable. Each of
+   these has a different fix, and getting it wrong wastes the user's time on the wrong theory. */
+export function explainOpenFailure(path: string, raw: string): string {
+  const text = raw.toLowerCase();
+  const hint = (advice: string) => `cannot open ${path}: ${advice}`;
+
+  if (text.includes('resource busy') || text.includes('ebusy') || text.includes('access is denied')) {
+    return hint(
+      'the port is already open in another program. Close the slicer, a serial terminal ' +
+        '(screen/PuTTY), or another 3DTune instance, then try again',
+    );
+  }
+  if (
+    text.includes('no such file') ||
+    text.includes('enoent') ||
+    text.includes('cannot find') ||
+    text.includes('not found') ||
+    text.includes('no such device')
+  ) {
+    return hint(
+      'no such device. Check the USB cable and the printer power, then re-run with --list-ports ' +
+        'to see the current port name',
+    );
+  }
+  if (text.includes('permission denied') || text.includes('eacces')) {
+    return hint(
+      process.platform === 'linux'
+        ? 'permission denied. Add your user to the dialout group (sudo usermod -aG dialout $USER) and log back in'
+        : 'permission denied. Grant the terminal access to the device, or check that no other user session holds it',
+    );
+  }
+  if (text.includes('unknown error code') || text.includes('setting custom baud')) {
+    return hint(`the driver rejected baud rate settings. Try --baud 115200, the KP5L default`);
+  }
+  return hint(raw);
+}
+
 export class SerialTransport extends EventEmitter implements Transport {
   readonly label: string;
   private path: string;
@@ -59,7 +96,7 @@ export class SerialTransport extends EventEmitter implements Transport {
       port.on('close', () => this.emit('close'));
       port.open((err) => {
         if (err) {
-          reject(new Error(`cannot open ${this.path}: ${err.message}`));
+          reject(new Error(explainOpenFailure(this.path, err.message)));
           return;
         }
         this.port = port;

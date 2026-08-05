@@ -1,17 +1,20 @@
 const ASSET_V = new URL(import.meta.url).searchParams.get('v') ?? '';
 let createChart;
+let createMesh3D;
 try {
   ({ createChart } = await import(`./chart.js${ASSET_V ? `?v=${ASSET_V}` : ''}`));
+  ({ createMesh3D } = await import(`./mesh3d.js${ASSET_V ? `?v=${ASSET_V}` : ''}`));
 } catch (err) {
   document.body.insertAdjacentHTML(
     'afterbegin',
     '<div class="banner" data-level="critical" style="margin:12px"><span class="banner-icon">\u2715</span>' +
-      '<span>Не загрузился chart.js — обнови страницу. Если не помогло, перезапусти сервер 3DTune.</span></div>',
+      '<span>Не загрузились модули визуализации — обнови страницу. Если не помогло, перезапусти сервер 3DTune.</span></div>',
   );
   throw err;
 }
 
 const $ = (id) => document.getElementById(id);
+const numeric = (value) => Number(String(value).trim().replace(',', '.'));
 
 const SETTING_META = {
   M92: { desc: 'шаги на мм', fields: ['X', 'Y', 'Z', 'E'], step: 0.01 },
@@ -34,6 +37,7 @@ if (new URLSearchParams(location.hash.slice(1)).get('t')) {
 }
 
 const chart = createChart($('chart'), $('tooltip'));
+const mesh3d = createMesh3D($('mesh3d'));
 
 let ws = null;
 let backoff = 500;
@@ -46,6 +50,7 @@ let pidCollecting = false;
 let edits = {};
 let probeEdits = {};
 let babystepSum = 0;
+let meshMode = 'raw';
 
 /* ---------- theme ---------- */
 
@@ -53,6 +58,7 @@ function applyTheme(theme) {
   if (theme) document.documentElement.dataset.theme = theme;
   else delete document.documentElement.dataset.theme;
   chart.redraw();
+  mesh3d.redraw();
 }
 applyTheme(localStorage.getItem('3dtune.theme'));
 
@@ -122,6 +128,16 @@ async function call(method, params, okMessage) {
   }
 }
 
+async function saveAndVerify(okMessage) {
+  const result = await rpc('save');
+  if (!result.verified) {
+    const details = (result.mismatches ?? []).join('; ') || 'принтер не подтвердил значения';
+    throw new Error(`M500 отправлен, но проверка через M501/M503 не прошла: ${details}`);
+  }
+  toast(okMessage, 'good');
+  return result;
+}
+
 function handle(msg) {
   switch (msg.t) {
     case 'hello':
@@ -185,6 +201,11 @@ function applyState(s) {
   $('fwMachine').textContent = c.machine ?? '—';
   $('queueDepth').textContent = s.queueDepth;
   $('saveCount').textContent = s.eepromSaves;
+  $('persistenceState').textContent = s.persistence?.dirty
+    ? 'изменения не сохранены'
+    : s.persistence?.verified
+      ? 'EEPROM проверена'
+      : 'из принтера';
 
   const connected = c.status === 'connected';
   $('connect').disabled = connected || c.status === 'connecting';
@@ -203,12 +224,13 @@ function applyState(s) {
 
   safe('banners', () => renderBanners(s));
   safe('endstops', () => renderEndstops(s.endstops));
-  safe('mesh', () => renderMesh(s.leveling.mesh));
+  safe('mesh', () => renderMesh(s.leveling));
   safe('leveling', () => {
     $('levelingState').textContent = s.leveling.on ? 'компенсация включена' : 'компенсация выключена';
   });
   safe('settings', () => renderSettings(s.settings));
   safe('probe', () => renderProbe(s));
+  safe('esteps', () => renderESteps(s));
   safe('pidTarget', () => {
     const bedButton = document.querySelector('#pidTarget button[data-target="bed"]');
     if (bedButton) bedButton.disabled = connected && s.settings.M304 === undefined;
@@ -229,6 +251,33 @@ function renderHeater(which, h) {
   $(`${which}Power`).style.width = `${Math.round(Math.min(1, h.power) * 100)}%`;
 }
 
+function renderESteps(s) {
+  const current = s.settings?.M92?.E;
+  $('eStepsCurrent').textContent = Number.isFinite(current) ? Number(current).toFixed(3) : '—';
+  const connected = s.connection.status === 'connected';
+  $('eStepsExtrude').disabled = !connected || !Number.isFinite(current);
+  $('eStepsApply').disabled = !connected || !Number.isFinite(current);
+  $('eStepsSave').disabled = !connected;
+  updateEStepsPreview();
+}
+
+function updateEStepsPreview() {
+  const previous = Number(state?.settings?.M92?.E);
+  const requested = numeric($('eStepsRequested').value);
+  const measured = numeric($('eStepsMeasured').value);
+  const out = $('eStepsPreview');
+  if (!Number.isFinite(previous) || previous <= 0 || !Number.isFinite(requested) || !Number.isFinite(measured) || measured <= 0) {
+    out.textContent = '—';
+    return;
+  }
+  const correction = requested / measured;
+  if (correction < 0.5 || correction > 2) {
+    out.textContent = 'проверь замер';
+    return;
+  }
+  out.textContent = (previous * correction).toFixed(3);
+}
+
 function renderBanners(s) {
   const box = $('banners');
   box.replaceChildren();
@@ -236,8 +285,25 @@ function renderBanners(s) {
   if (s.halted) {
     box.appendChild(banner('critical', '✕', 'Принтер остановлен по M112. Выключи и включи питание платы.'));
   }
+  if (s.connection.status === 'error' && (s.temps.hotend.target > 0 || s.temps.bed.target > 0)) {
+    box.appendChild(
+      banner(
+        'critical',
+        '✕',
+        'USB-связь потеряна при включённом нагреве. 3DTune больше не может гарантировать отключение нагревателей — проверь принтер и при сомнении выключи питание.',
+      ),
+    );
+  }
   for (const text of s.warnings ?? []) {
     box.appendChild(banner('warning', '⚠', text));
+  }
+  if (s.persistence?.dirty) {
+    box.appendChild(banner('warning', '⚠', 'Есть применённые изменения, которые ещё не сохранены в EEPROM принтера.'));
+  }
+  if (s.persistence?.verified === false) {
+    box.appendChild(
+      banner('critical', '✕', `Проверка EEPROM не прошла: ${(s.persistence.mismatches ?? []).join('; ')}`),
+    );
   }
 }
 
@@ -284,12 +350,17 @@ function renderEndstops(map) {
   }
 }
 
-function renderMesh(mesh) {
+function renderMesh(leveling) {
+  const mesh = leveling?.mesh;
+  const analysis = leveling?.analysis;
+  const shown = meshMode === 'curvature' ? analysis?.residuals : mesh;
   const box = $('mesh');
   const scale = $('meshScale');
   box.replaceChildren();
-  if (!mesh || mesh.length === 0) {
+  if (!shown || shown.length === 0) {
     scale.hidden = true;
+    $('meshStats').hidden = true;
+    mesh3d.setData(null);
     const span = document.createElement('span');
     span.className = 'muted small';
     span.textContent = 'нет данных — выполни G29';
@@ -297,10 +368,10 @@ function renderMesh(mesh) {
     return;
   }
 
-  const flat = mesh.flat();
+  const flat = shown.flat();
   const maxAbs = Math.max(0.005, ...flat.map(Math.abs));
 
-  [...mesh].reverse().forEach((row, ri) => {
+  [...shown].reverse().forEach((row, ri) => {
     const div = document.createElement('div');
     div.className = 'mesh-row';
     row.forEach((v, ci) => {
@@ -311,7 +382,7 @@ function renderMesh(mesh) {
       cell.style.background = `color-mix(in oklab, ${pole} ${(k * 100).toFixed(1)}%, var(--div-mid))`;
       if (k > 0.5) cell.dataset.pole = 'true';
       cell.textContent = v.toFixed(3);
-      cell.title = `точка ${ci + 1}, ряд ${mesh.length - ri}: ${v.toFixed(3)} мм`;
+      cell.title = `точка ${ci + 1}, ряд ${shown.length - ri}: ${v.toFixed(3)} мм`;
       div.appendChild(cell);
     });
     box.appendChild(div);
@@ -320,6 +391,24 @@ function renderMesh(mesh) {
   scale.hidden = false;
   $('meshMin').textContent = `${(-maxAbs).toFixed(3)}`;
   $('meshMax').textContent = `+${maxAbs.toFixed(3)}`;
+  mesh3d.setData(shown);
+
+  $('meshInterpretation').textContent = meshMode === 'curvature'
+    ? 'Кривизна после вычитания общей плоскости: винтами этот рисунок не убрать.'
+    : 'Исходные высоты: общий градиент показывает наклон стола и регулируется винтами.';
+  const stats = analysis?.stats;
+  $('meshStats').hidden = !stats;
+  if (stats) {
+    $('meshRange').textContent = `${stats.range.toFixed(3)} мм`;
+    $('meshTiltX').textContent = signed(stats.tiltX);
+    $('meshTiltY').textContent = signed(stats.tiltY);
+    $('meshWarp').textContent = `${stats.maxAbsResidual.toFixed(3)} мм`;
+    $('meshCenter').textContent = signed(stats.centerVsCorners);
+  }
+}
+
+function signed(value) {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(3)} мм`;
 }
 
 function renderProbe(s) {
@@ -424,8 +513,8 @@ function settingGroup(code, params) {
     input.oninput = () => {
       const key = `${code}.${field}`;
       const original = state?.settings?.[code]?.[field];
-      if (input.value === '' || Number(input.value) === original) delete edits[key];
-      else edits[key] = Number(input.value);
+      if (input.value === '' || numeric(input.value) === original) delete edits[key];
+      else edits[key] = numeric(input.value);
       input.dataset.dirty = String(edits[key] !== undefined);
       renderPending();
     };
@@ -514,6 +603,10 @@ segment('pidTarget', (btn) => {
   pidTarget = btn.dataset.target;
   $('pidTemp').value = pidTarget === 'bed' ? 60 : 210;
 });
+segment('meshMode', (btn) => {
+  meshMode = btn.dataset.mode;
+  if (state) renderMesh(state.leveling);
+});
 
 async function refreshPorts() {
   const select = $('portSelect');
@@ -537,7 +630,7 @@ $('connect').onclick = () => {
   const value = $('portSelect').value;
   return value === 'mock'
     ? call('connect', { kind: 'mock' }, 'Подключено к эмулятору')
-    : call('connect', { kind: 'serial', path: value, baud: Number($('baud').value) }, 'Подключено');
+    : call('connect', { kind: 'serial', path: value, baud: numeric($('baud').value) }, 'Подключено');
 };
 
 $('disconnect').onclick = () => call('disconnect', {}, 'Отключено');
@@ -550,7 +643,7 @@ $('estop').onclick = () => {
 document.querySelectorAll('[data-set]').forEach((btn) => {
   btn.onclick = async () => {
     const which = btn.dataset.set;
-    const value = Number($(which === 'hotend' ? 'hotendTarget' : 'bedTarget').value);
+    const value = numeric($(which === 'hotend' ? 'hotendTarget' : 'bedTarget').value);
     const method = which === 'hotend' ? 'setHotend' : 'setBed';
     try {
       await rpc(method, { value });
@@ -588,8 +681,12 @@ document.querySelectorAll('[data-home]').forEach((btn) => {
   btn.onclick = () => call('home', { axes: btn.dataset.home });
 });
 
-document.querySelectorAll('[data-gcode]').forEach((btn) => {
-  btn.onclick = () => call('gcode', { command: btn.dataset.gcode });
+document.querySelectorAll('[data-probe-action]').forEach((btn) => {
+  btn.onclick = () => call('probeAction', { action: btn.dataset.probeAction });
+});
+
+document.querySelectorAll('[data-leveling]').forEach((btn) => {
+  btn.onclick = () => call('setLeveling', { on: btn.dataset.leveling === 'on' });
 });
 
 document.querySelectorAll('[data-babystep]').forEach((btn) => {
@@ -618,7 +715,7 @@ $('applyProbeOffset').onclick = async () => {
   const params = {};
   for (const f of PROBE_FIELDS) {
     const input = $('probeOffsetFields').querySelector(`input[data-probe="${f}"]`);
-    if (input && input.value !== '') params[f.toLowerCase()] = Number(input.value);
+    if (input && input.value !== '') params[f.toLowerCase()] = numeric(input.value);
   }
   await call('probeOffset', params, 'M851 применён');
   probeEdits = {};
@@ -626,11 +723,74 @@ $('applyProbeOffset').onclick = async () => {
 
 $('runG29').onclick = async () => {
   if (!confirm('G29 снимет сетку стола. Стол и сопло должны быть в рабочем состоянии, щуп установлен. Продолжить?')) return;
-  await call('gcode', { command: 'G29' }, 'Сетка снята');
+  await call('runBedLeveling', { confirmed: true }, 'Сетка снята');
 };
 
 $('motorsOff').onclick = () => call('motorsOff', {});
 $('readEndstops').onclick = () => call('readEndstops', {});
+$('eStepsRequested').oninput = updateEStepsPreview;
+$('eStepsMeasured').oninput = updateEStepsPreview;
+
+$('eStepsExtrude').onclick = async () => {
+  const distance = numeric($('eStepsRequested').value);
+  const feedrate = numeric($('eStepsFeedrate').value);
+  if (!confirm(
+    `Принтер подаст ${distance} мм филамента со скоростью ${feedrate} мм/мин.\n\n` +
+      `Сопло должно быть нагрето минимум до ${state?.limits?.minExtrudeTemp ?? 170}°C. ` +
+      'Поставь метку на филаменте и убедись, что путь подачи свободен.',
+  )) return;
+  const button = $('eStepsExtrude');
+  button.disabled = true;
+  $('eStepsStatus').textContent = 'Идёт контрольная подача…';
+  try {
+    await rpc('eStepsExtrude', { distance, feedrate });
+    $('eStepsStatus').textContent = 'Подача завершена. Измерь фактически протянутую длину и введи её ниже.';
+    toast('Контрольная подача завершена', 'good');
+  } catch (err) {
+    $('eStepsStatus').textContent = `Ошибка: ${err.message}`;
+    toast(err.message);
+  } finally {
+    button.disabled = state?.connection?.status !== 'connected';
+  }
+};
+
+$('eStepsApply').onclick = async () => {
+  const requested = numeric($('eStepsRequested').value);
+  const measured = numeric($('eStepsMeasured').value);
+  const preview = $('eStepsPreview').textContent;
+  if (!Number.isFinite(measured) || measured <= 0 || preview === '—' || preview === 'проверь замер') {
+    toast('Введи корректную фактически протянутую длину.');
+    return;
+  }
+  if (!confirm(
+    `Текущее M92 E${$('eStepsCurrent').textContent} → M92 E${preview}.\n\n` +
+      'Применить без записи в EEPROM?',
+  )) return;
+  try {
+    const result = await rpc('calibrateESteps', { requested, measured });
+    $('eStepsMeasured').value = '';
+    $('eStepsStatus').textContent =
+      `Применено: M92 E${result.previous.toFixed(3)} → E${result.next.toFixed(3)}. ` +
+      'Для сохранения после перезапуска нажми M500.';
+    toast('E-steps применены. EEPROM ещё не записана.', 'good');
+  } catch (err) {
+    $('eStepsStatus').textContent = `Ошибка: ${err.message}`;
+    toast(err.message);
+  }
+};
+
+$('eStepsSave').onclick = async () => {
+  if (!confirm(
+    'Сохранить текущие настройки в EEPROM командой M500?\n\n' +
+      'EEPROM эмулируется во flash, поэтому лишние записи ограничены.',
+  )) return;
+  try {
+    await saveAndVerify('E-steps сохранены и проверены через M501/M503');
+  } catch (err) {
+    toast(err.message);
+  }
+};
+
 $('readSettings').onclick = async () => {
   edits = {};
   probeEdits = {};
@@ -676,12 +836,16 @@ $('saveEeprom').onclick = async () => {
     clearDirtyFlags();
     renderPending();
   }
-  await call('save', {}, 'Сохранено в EEPROM');
+  try {
+    await saveAndVerify('Сохранено в EEPROM и проверено через M501/M503');
+  } catch (err) {
+    toast(err.message);
+  }
 };
 
 $('pidRun').onclick = async () => {
-  const temp = Number($('pidTemp').value);
-  const cycles = Number($('pidCycles').value);
+  const temp = numeric($('pidTemp').value);
+  const cycles = numeric($('pidCycles').value);
   const apply = $('pidApply').checked;
   const what = pidTarget === 'bed' ? 'стол' : 'сопло';
   if (!confirm(`Автотюн PID: ${what}, ${temp}°C, ${cycles} циклов.\n\nНагреватель будет циклически работать несколько минут. Не оставляй принтер без наблюдения.`)) return;
@@ -727,7 +891,10 @@ function debounce(fn, ms) {
   };
 }
 
-matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => chart.redraw());
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+  chart.redraw();
+  mesh3d.redraw();
+});
 setInterval(() => chart.redraw(), 1000);
 connectWs();
 refreshPorts();

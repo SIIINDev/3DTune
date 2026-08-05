@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { Printer } from '../src/printer/printer.ts';
-import { startServer } from '../src/server/server.ts';
+import { startServer, type ServerHandle } from '../src/server/server.ts';
 
 const TOKEN = 'test-token-abcdefghijklmnop';
 const printer = new Printer();
-let server: { close: () => Promise<void>; port: () => number };
+let server: ServerHandle;
 let port = 0;
 
 before(async () => {
@@ -19,7 +19,7 @@ before(async () => {
     mock: true,
     chaos: false,
   });
-  await new Promise((r) => setTimeout(r, 250));
+  await server.ready;
   port = server.port();
   await printer.connect({ kind: 'mock' });
 });
@@ -35,9 +35,9 @@ type Client = {
   close: () => void;
 };
 
-function connect(token = TOKEN, label = 'test'): Promise<Client> {
+function connect(token = TOKEN, label = 'test', targetPort = port): Promise<Client> {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(token)}`);
+    const ws = new WebSocket(`ws://127.0.0.1:${targetPort}/ws?token=${encodeURIComponent(token)}`);
     const waiting = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
     let nextId = 1;
     let resolveHello: (v: Record<string, unknown>) => void = () => {};
@@ -87,6 +87,20 @@ test('static assets are served with cache-busting and no-store', async () => {
   assert.doesNotMatch(body, /__V__/, 'the version placeholder must be substituted');
 });
 
+test('a second server reports an occupied port without crashing', async () => {
+  const duplicate = startServer({
+    printer,
+    token: TOKEN,
+    host: '127.0.0.1',
+    port,
+    webRoot: join(import.meta.dirname, '..', 'web'),
+    mock: true,
+    chaos: false,
+  });
+  await assert.rejects(() => duplicate.ready, /already in use/);
+  await duplicate.close();
+});
+
 test('path traversal outside the web root is refused', async () => {
   const res = await fetch(`http://127.0.0.1:${port}/../package.json`);
   assert.notEqual(res.status, 200);
@@ -124,11 +138,71 @@ test('unknown rpc methods are rejected', async () => {
   client.close();
 });
 
+test('malformed RPC shape is rejected without destabilising the server', async () => {
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(TOKEN)}`);
+    ws.onerror = () => reject(new Error('ws error'));
+    ws.onopen = () => ws.send(JSON.stringify({ t: 'rpc', id: 99, method: 42, params: [] }));
+    ws.onmessage = (event) => {
+      const msg = JSON.parse(String(event.data)) as Record<string, unknown>;
+      if (msg['t'] !== 'reply' || msg['id'] !== 99) return;
+      assert.equal(msg['ok'], false);
+      assert.equal(msg['code'], 'invalid_request');
+      ws.close();
+      resolve();
+    };
+  });
+});
+
+test('oversized WebSocket messages are closed with 1009', async () => {
+  await new Promise<void>((resolve, reject) => {
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${encodeURIComponent(TOKEN)}`);
+    ws.onerror = () => undefined;
+    ws.onopen = () => ws.send('x'.repeat(65 * 1024));
+    ws.onclose = (event) => {
+      try {
+        assert.equal(event.code, 1009);
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    };
+  });
+});
+
 test('safety errors travel to the client with their code', async () => {
   const client = await connect();
   await client.hello;
   await assert.rejects(() => client.rpc('setHotend', { value: 400 }), /over_max/);
   await assert.rejects(() => client.rpc('babystep', { delta: 5 }), /bad_value/);
+  await assert.rejects(() => client.rpc('gcode', { command: 'M104 S250' }), /unsafe_gcode/);
+  client.close();
+});
+
+test('E-steps calibration is validated and applied through RPC', async () => {
+  const client = await connect();
+  await client.hello;
+  await assert.rejects(
+    () => client.rpc('calibrateESteps', { requested: 100, measured: 10 }),
+    /implausible_measurement/,
+  );
+  const result = (await client.rpc('calibrateESteps', {
+    requested: 100,
+    measured: 96,
+  })) as { next: number };
+  assert.equal(result.next, 800);
+  assert.equal(printer.snapshot().settings['M92']?.['E'], 800);
+  client.close();
+});
+
+test('M500 RPC reloads and verifies settings stored in the printer', async () => {
+  const client = await connect();
+  await client.hello;
+  const result = (await client.rpc('save')) as { verified: boolean; mismatches: string[] };
+  assert.equal(result.verified, true, result.mismatches.join('; '));
+  assert.deepEqual(result.mismatches, []);
+  assert.equal(printer.snapshot().persistence.dirty, false);
+  assert.equal(printer.snapshot().persistence.verified, true);
   client.close();
 });
 
@@ -157,4 +231,39 @@ test('a second client sees the same state and appears in the roster', async () =
   assert.ok(roster.some((c) => c.label === 'пк'));
   a.close();
   b.close();
+});
+
+test('dead-man timer cools a confirmed-idle printer after the last client leaves', async () => {
+  const guardedPrinter = new Printer();
+  const safetyEvents: string[] = [];
+  const guardedServer = startServer({
+    printer: guardedPrinter,
+    token: TOKEN,
+    host: '127.0.0.1',
+    port: 0,
+    webRoot: join(import.meta.dirname, '..', 'web'),
+    mock: true,
+    chaos: false,
+    deadmanMs: 50,
+    onSafetyEvent: (message) => safetyEvents.push(message),
+  });
+  await guardedServer.ready;
+  await guardedPrinter.connect({ kind: 'mock', sdPrintStatus: 'idle' });
+
+  try {
+    const client = await connect(TOKEN, 'deadman-test', guardedServer.port());
+    await client.hello;
+    await guardedPrinter.setHotendTarget(200);
+    client.close();
+
+    const deadline = Date.now() + 1_500;
+    while (guardedPrinter.snapshot().temps.hotend.target !== 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    assert.equal(guardedPrinter.snapshot().temps.hotend.target, 0);
+    assert.ok(safetyEvents.some((message) => /turned off/.test(message)), safetyEvents.join('; '));
+  } finally {
+    await guardedPrinter.disconnect();
+    await guardedServer.close();
+  }
 });

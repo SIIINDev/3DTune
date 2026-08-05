@@ -13,6 +13,7 @@ import {
   checkJog,
   type MachineLimits,
 } from './limits.ts';
+import { analyzeMesh, MeshCollector, type MeshAnalysis } from './mesh.ts';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -33,27 +34,83 @@ export type PrinterStateSnapshot = {
   homed: { x: boolean; y: boolean; z: boolean };
   endstops: Record<string, string>;
   settings: Record<string, Record<string, number>>;
-  leveling: { on: boolean; mesh: number[][] | null };
+  leveling: { on: boolean; mesh: number[][] | null; analysis: MeshAnalysis | null };
   busy: string | null;
   halted: boolean;
   fan: number;
   queueDepth: number;
   eepromSaves: number;
+  persistence: { dirty: boolean; verifiedAt: number | null; verified: boolean | null; mismatches: string[] };
   warnings: string[];
   limits: MachineLimits;
 };
 
 export type TempSample = { t: number; h: number; ht: number; b: number; bt: number };
 
+export type SaveVerification = CommandResult & {
+  verified: boolean;
+  mismatches: string[];
+  verifiedAt: number | null;
+};
+
 export type ConnectTarget =
   | { kind: 'serial'; path: string; baud: number }
-  | { kind: 'mock'; chaos?: boolean; noBedPid?: boolean };
+  | {
+      kind: 'mock';
+      chaos?: boolean;
+      noBedPid?: boolean;
+      sdPrintStatus?: 'idle' | 'printing' | 'unknown';
+      corruptPrefixCount?: number;
+    };
+
+export type SdPrintStatus = 'idle' | 'printing' | 'unknown';
+
+export type CoolingDecision = {
+  action: 'cooled' | 'left_on' | 'not_needed';
+  sdPrintStatus: SdPrintStatus;
+  reason: string;
+};
 
 const TEMP_HISTORY = 1800;
 const LOG_HISTORY = 600;
 const STATE_THROTTLE_MS = 120;
 const HANDSHAKE_ATTEMPTS = 3;
 const SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M420', 'M851', 'M900']);
+const EDITABLE_SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M851', 'M900']);
+const SAFE_TERMINAL_COMMAND = /^(M20|M27|M105|M114|M115|M119|M503)(?:[ \t]+[^\r\n]*)?$/i;
+
+export type EStepsCalibration = {
+  previous: number;
+  requested: number;
+  measured: number;
+  next: number;
+};
+
+export function calculateESteps(previous: number, requested: number, measured: number): EStepsCalibration {
+  if (!Number.isFinite(previous) || previous <= 0) {
+    throw new SafetyError('esteps_unavailable', 'current M92 E value is unavailable');
+  }
+  if (!Number.isFinite(requested) || requested < 20 || requested > 200) {
+    throw new SafetyError('bad_value', 'requested extrusion must be between 20 and 200 mm');
+  }
+  if (!Number.isFinite(measured) || measured <= 0 || measured > 300) {
+    throw new SafetyError('bad_value', 'measured extrusion must be greater than 0 and at most 300 mm');
+  }
+
+  const correction = requested / measured;
+  if (correction < 0.5 || correction > 2) {
+    throw new SafetyError(
+      'implausible_measurement',
+      'measurement would change E-steps by more than 2× — check the marks and entered distance',
+    );
+  }
+
+  const next = Number((previous * correction).toFixed(3));
+  if (next < 50 || next > 5_000) {
+    throw new SafetyError('implausible_esteps', `calculated M92 E${next} is outside the plausible range`);
+  }
+  return { previous, requested, measured, next };
+}
 
 export class Printer extends EventEmitter {
   readonly limits: MachineLimits;
@@ -75,10 +132,19 @@ export class Printer extends EventEmitter {
   private settings: Record<string, Record<string, number>> = {};
   private levelingOn = false;
   private mesh: number[][] | null = null;
-  private meshCapture: number[][] | null = null;
+  private meshCollector = new MeshCollector();
   private fan = 0;
   private eepromSaves = 0;
   private lastSaveAt = 0;
+  private persistedSettings: Record<string, Record<string, number>> | null = null;
+  private persistedMesh: number[][] | null = null;
+  private persistedLevelingOn = false;
+  private saveVerification: { at: number; verified: boolean; mismatches: string[] } | null = null;
+  private lastTarget: ConnectTarget | null = null;
+  private reconnectTimer?: NodeJS.Timeout;
+  private reconnectAttempt = 0;
+  private manualDisconnect = false;
+  private recoveringReset = false;
 
   tempHistory: TempSample[] = [];
   log: { t: number; dir: 'rx' | 'tx' | 'sys'; text: string }[] = [];
@@ -104,12 +170,22 @@ export class Printer extends EventEmitter {
       homed: { ...this.homed },
       endstops: { ...this.endstops },
       settings: structuredClone(this.settings),
-      leveling: { on: this.levelingOn, mesh: this.mesh },
+      leveling: {
+        on: this.levelingOn,
+        mesh: this.mesh,
+        analysis: analyzeMesh(this.mesh, this.limits.bedSize.x, this.limits.bedSize.y),
+      },
       busy: this.link?.busy ?? null,
       halted: this.link?.isHalted ?? false,
       fan: this.fan,
       queueDepth: this.link?.queueDepth ?? 0,
       eepromSaves: this.eepromSaves,
+      persistence: {
+        dirty: this.persistenceDirty(),
+        verifiedAt: this.saveVerification?.at ?? null,
+        verified: this.saveVerification?.verified ?? null,
+        mismatches: [...(this.saveVerification?.mismatches ?? [])],
+      },
       warnings: this.warnings(),
       limits: this.limits,
     };
@@ -142,6 +218,9 @@ export class Printer extends EventEmitter {
     if (this.status === 'connected' || this.status === 'connecting') {
       throw new Error('already connected — disconnect first');
     }
+    this.clearReconnect();
+    this.manualDisconnect = false;
+    this.lastTarget = structuredClone(target);
     this.resetVolatile();
     this.status = 'connecting';
     this.connError = null;
@@ -149,7 +228,12 @@ export class Printer extends EventEmitter {
 
     const transport: Transport =
       target.kind === 'mock'
-        ? new MockTransport({ chaos: target.chaos ?? false, noBedPid: target.noBedPid ?? false })
+        ? new MockTransport({
+            chaos: target.chaos ?? false,
+            noBedPid: target.noBedPid ?? false,
+            sdPrintStatus: target.sdPrintStatus ?? 'idle',
+            corruptPrefixCount: target.corruptPrefixCount ?? 0,
+          })
         : new SerialTransport(target.path, target.baud);
 
     this.transport = transport;
@@ -176,6 +260,7 @@ export class Printer extends EventEmitter {
       await link.resync();
       await this.handshake(link);
       this.status = 'connected';
+      this.reconnectAttempt = 0;
       this.emitState();
     } catch (err) {
       this.connError = err instanceof Error ? err.message : String(err);
@@ -186,6 +271,9 @@ export class Printer extends EventEmitter {
   }
 
   async disconnect(): Promise<void> {
+    this.manualDisconnect = true;
+    this.lastTarget = null;
+    this.clearReconnect();
     this.link?.close();
     await this.transport?.close();
     this.link = null;
@@ -216,6 +304,10 @@ export class Printer extends EventEmitter {
     }
     await link.send('M114');
     await link.send('M119');
+    if (this.caps['AUTOLEVEL'] !== false) await link.send('M420 V1');
+    this.persistedSettings = structuredClone(this.settings);
+    this.persistedMesh = structuredClone(this.mesh);
+    this.persistedLevelingOn = this.levelingOn;
   }
 
   private tempPoll?: NodeJS.Timeout;
@@ -291,6 +383,7 @@ export class Printer extends EventEmitter {
       this.sys('printer sent boot banner — board reset detected');
       this.homed = { x: false, y: false, z: false };
       this.emit('event', { type: 'reset' });
+      if (this.status === 'connected') void this.recoverAfterReset(link);
     });
     link.on('action', (action: string) => this.emit('event', { type: 'action', action }));
     link.on('printerError', (text: string, fatal: boolean) => {
@@ -312,6 +405,7 @@ export class Printer extends EventEmitter {
       this.connError = err.message;
       this.sys(`link closed: ${err.message}`);
       this.emitState();
+      this.scheduleReconnect();
     });
   }
 
@@ -324,25 +418,11 @@ export class Printer extends EventEmitter {
       this.emitState();
     }
 
-    if (/Leveling Grid|Mesh Bed Level data/i.test(line)) {
-      this.meshCapture = [];
-      return;
-    }
-    if (this.meshCapture === null) return;
-
-    const rowMatch = /^(\d+)\s+(.+)$/.exec(line);
-    if (rowMatch) {
-      const tokens = (rowMatch[2] ?? '').trim().split(/\s+/);
-      const isDataRow = tokens.length > 0 && tokens.every((t) => /^[+-]?\d*\.\d+$/.test(t));
-      if (isDataRow) this.meshCapture.push(tokens.map(Number));
-      return;
-    }
-
-    if (this.meshCapture.length > 0) {
-      this.mesh = this.meshCapture;
+    const completed = this.meshCollector.push(raw);
+    if (completed) {
+      this.mesh = completed;
       this.emitState();
     }
-    this.meshCapture = null;
   }
 
   private requireLink(): Link {
@@ -353,7 +433,14 @@ export class Printer extends EventEmitter {
   }
 
   gcode(command: string): Promise<CommandResult> {
-    return this.requireLink().send(command);
+    const clean = command.trim();
+    if (!SAFE_TERMINAL_COMMAND.test(clean)) {
+      throw new SafetyError(
+        'unsafe_gcode',
+        'эта команда запрещена в сыром терминале — используй соответствующий безопасный контрол 3DTune',
+      );
+    }
+    return this.requireLink().send(clean);
   }
 
   estop(): void {
@@ -382,6 +469,56 @@ export class Printer extends EventEmitter {
     this.emitState();
   }
 
+  async readSdPrintStatus(): Promise<SdPrintStatus> {
+    const result = await this.requireLink().send('M27', { timeoutMs: 5_000 });
+    if (!result.ok) return 'unknown';
+    for (const line of result.lines) {
+      if (/\bnot\s+(?:sd\s+)?printing\b/i.test(line)) return 'idle';
+      if (/\bsd\s+printing\s+byte\b/i.test(line) || /\bprinting\s+from\s+sd\b/i.test(line)) {
+        return 'printing';
+      }
+    }
+    return 'unknown';
+  }
+
+  /**
+   * Turn heaters off only when Marlin explicitly confirms that no SD print is running.
+   * An unavailable or unfamiliar M27 response is deliberately treated as unsafe to interrupt.
+   */
+  async coolIfIdle(reason: string): Promise<CoolingDecision> {
+    if (this.hotend.target <= 0 && this.bed.target <= 0) {
+      return { action: 'not_needed', sdPrintStatus: 'unknown', reason };
+    }
+
+    let sdPrintStatus: SdPrintStatus = 'unknown';
+    try {
+      sdPrintStatus = await this.readSdPrintStatus();
+    } catch (err) {
+      this.sys(`HEATERS LEFT ON (${reason}): cannot read SD print status: ${errorText(err)}`);
+      return { action: 'left_on', sdPrintStatus, reason };
+    }
+
+    if (sdPrintStatus !== 'idle') {
+      this.sys(`HEATERS LEFT ON (${reason}): SD print status is ${sdPrintStatus}`);
+      return { action: 'left_on', sdPrintStatus, reason };
+    }
+
+    const link = this.requireLink();
+    const hotend = this.hotend.target > 0 ? await link.send('M104 S0', { timeoutMs: 5_000 }) : { ok: true };
+    if (hotend.ok) this.hotend.target = 0;
+    const bed = this.bed.target > 0 ? await link.send('M140 S0', { timeoutMs: 5_000 }) : { ok: true };
+    if (bed.ok) this.bed.target = 0;
+    this.emitState();
+
+    if (!hotend.ok || !bed.ok) {
+      this.sys(`HEATER SHUTDOWN INCOMPLETE (${reason}): check the printer and cut power if necessary`);
+      return { action: 'left_on', sdPrintStatus, reason };
+    }
+
+    this.sys(`heaters cooled (${reason}); M27 confirmed that no SD print is running`);
+    return { action: 'cooled', sdPrintStatus, reason };
+  }
+
   async setFan(value: number): Promise<void> {
     const pwm = Math.round(Math.min(255, Math.max(0, value)));
     await this.requireLink().send(pwm === 0 ? 'M107' : `M106 S${pwm}`);
@@ -398,6 +535,24 @@ export class Printer extends EventEmitter {
     await link.send(`G1 ${axis}${distance} F${f}`);
     await link.send('G90');
     await link.send('M114');
+  }
+
+  async extrudeForESteps(distance: number, feedrate = 120): Promise<void> {
+    if (!Number.isFinite(distance) || distance < 20 || distance > 200) {
+      throw new SafetyError('bad_value', 'E-steps calibration extrusion must be between 20 and 200 mm');
+    }
+    if (!Number.isFinite(feedrate) || feedrate < 30 || feedrate > 300) {
+      throw new SafetyError('bad_value', 'E-steps calibration feedrate must be between 30 and 300 mm/min');
+    }
+    await this.jog('E', distance, feedrate);
+  }
+
+  async calibrateESteps(requested: number, measured: number): Promise<EStepsCalibration> {
+    const previous = this.settings['M92']?.['E'];
+    const calibration = calculateESteps(previous ?? Number.NaN, requested, measured);
+    await this.requireLink().send(`M92 E${calibration.next}`);
+    await this.refreshSettings();
+    return calibration;
   }
 
   async home(axes: string): Promise<void> {
@@ -438,15 +593,40 @@ export class Printer extends EventEmitter {
 
   async applySettings(commands: string[]): Promise<CommandResult[]> {
     const link = this.requireLink();
+    const validated = commands.map((cmd) => {
+      const clean = cmd.trim().toUpperCase();
+      const match = /^(M\d+)[ \t]+((?:[A-Z]-?(?:\d+(?:\.\d*)?|\.\d+)[ \t]*)+)$/.exec(clean);
+      if (!match || !EDITABLE_SETTING_CODES.has(match[1] ?? '')) {
+        throw new SafetyError('unsafe_setting', `setting command is not allowed: ${cmd}`);
+      }
+      return clean;
+    });
     const results: CommandResult[] = [];
-    for (const cmd of commands) {
-      results.push(await link.send(cmd));
-    }
+    for (const cmd of validated) results.push(await link.send(cmd));
     await this.refreshSettings();
     return results;
   }
 
-  async saveToEeprom(): Promise<CommandResult> {
+  async probeAction(action: 'deploy' | 'stow' | 'selftest'): Promise<CommandResult> {
+    const angle = action === 'deploy' ? 10 : action === 'stow' ? 90 : 120;
+    return this.requireLink().send(`M280 P0 S${angle}`);
+  }
+
+  async runBedLeveling(confirmed: boolean): Promise<CommandResult> {
+    if (!confirmed) {
+      throw new SafetyError('needs_confirm', 'G29 moves all axes and requires explicit confirmation');
+    }
+    if (!this.homed.x || !this.homed.y || !this.homed.z) await this.home('');
+    return this.requireLink().send('G29');
+  }
+
+  async setLeveling(on: boolean): Promise<CommandResult> {
+    const result = await this.requireLink().send(`M420 S${on ? 1 : 0}`);
+    await this.refreshSettings();
+    return result;
+  }
+
+  async saveToEeprom(): Promise<SaveVerification> {
     const now = Date.now();
     if (now - this.lastSaveAt < this.limits.eepromSaveMinIntervalMs) {
       throw new SafetyError(
@@ -456,13 +636,52 @@ export class Printer extends EventEmitter {
         )}s before saving again`,
       );
     }
-    this.lastSaveAt = now;
-    const res = await this.requireLink().send('M500', { timeoutMs: 15_000 });
-    if (res.ok) {
-      this.eepromSaves++;
-      this.emitState();
+    const link = this.requireLink();
+
+    // M503/M420 make the comparison include changes made through raw G-code or another client.
+    await this.refreshSettings();
+    this.mesh = null;
+    this.meshCollector.reset();
+    if (this.caps['AUTOLEVEL'] !== false) await link.send('M420 V1', { timeoutMs: 20_000 });
+    const expectedSettings = structuredClone(this.settings);
+    const expectedMesh = structuredClone(this.mesh);
+    const expectedLevelingOn = this.levelingOn;
+    const preflightMismatches =
+      expectedLevelingOn && expectedMesh === null ? ['active bed mesh could not be read before M500'] : [];
+
+    this.lastSaveAt = Date.now();
+    const res = await link.send('M500', { timeoutMs: 15_000 });
+    if (!res.ok) {
+      return { ...res, verified: false, mismatches: ['M500 failed'], verifiedAt: null };
     }
-    return res;
+
+    this.eepromSaves++;
+    const reload = await link.send('M501', { timeoutMs: 15_000 });
+    const mismatches: string[] = [...preflightMismatches];
+    if (!reload.ok) mismatches.push('M501 failed');
+
+    await this.refreshSettings();
+    // Clear the cached mesh first so M420 V1 must repopulate it from the state loaded by M501.
+    this.mesh = null;
+    this.meshCollector.reset();
+    if (this.caps['AUTOLEVEL'] !== false) await link.send('M420 V1', { timeoutMs: 20_000 });
+
+    mismatches.push(...settingMismatches(expectedSettings, this.settings));
+    if (expectedLevelingOn !== this.levelingOn) {
+      mismatches.push(`M420 S expected ${expectedLevelingOn ? 1 : 0}, got ${this.levelingOn ? 1 : 0}`);
+    }
+    if (!meshesEqual(expectedMesh, this.mesh)) mismatches.push('bed mesh changed after M501');
+
+    const verifiedAt = Date.now();
+    const verified = mismatches.length === 0;
+    this.saveVerification = { at: verifiedAt, verified, mismatches };
+    if (verified) {
+      this.persistedSettings = structuredClone(this.settings);
+      this.persistedMesh = structuredClone(this.mesh);
+      this.persistedLevelingOn = this.levelingOn;
+    }
+    this.emitState();
+    return { ...res, verified, mismatches, verifiedAt };
   }
 
   async babystepZ(delta: number): Promise<void> {
@@ -508,6 +727,58 @@ export class Printer extends EventEmitter {
     return this.requireLink().send(cmd, { timeoutMs: 30 * 60_000 });
   }
 
+  async simulateTransportLoss(): Promise<void> {
+    if (!(this.transport instanceof MockTransport)) throw new Error('transport loss simulation is mock-only');
+    await this.transport.close();
+  }
+
+  simulateBoardReset(): void {
+    if (!(this.transport instanceof MockTransport)) throw new Error('board reset simulation is mock-only');
+    this.transport.simulateBoardReset();
+  }
+
+  private scheduleReconnect(): void {
+    if (this.manualDisconnect || this.lastTarget === null || this.reconnectTimer) return;
+    const target = structuredClone(this.lastTarget);
+    const delayMs = Math.min(8_000, 400 * 2 ** this.reconnectAttempt++);
+    this.sys(`reconnect scheduled in ${delayMs} ms`);
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = undefined;
+      this.link = null;
+      this.transport = null;
+      void this.connect(target).catch((err) => {
+        this.sys(`reconnect failed: ${err instanceof Error ? err.message : String(err)}`);
+        this.scheduleReconnect();
+      });
+    }, delayMs);
+  }
+
+  private clearReconnect(): void {
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = undefined;
+  }
+
+  private async recoverAfterReset(link: Link): Promise<void> {
+    if (this.recoveringReset || this.link !== link) return;
+    this.recoveringReset = true;
+    this.status = 'connecting';
+    this.emitState();
+    try {
+      await link.resync();
+      await this.handshake(link);
+      this.status = 'connected';
+      this.connError = null;
+      this.sys('state restored after board reset');
+    } catch (err) {
+      this.status = 'error';
+      this.connError = err instanceof Error ? err.message : String(err);
+      this.sys(`state restore after reset failed: ${this.connError}`);
+    } finally {
+      this.recoveringReset = false;
+      this.emitState();
+    }
+  }
+
   private resetVolatile(): void {
     this.caps = {};
     this.capsReported = false;
@@ -516,9 +787,23 @@ export class Printer extends EventEmitter {
     this.settings = {};
     this.endstops = {};
     this.mesh = null;
-    this.meshCapture = null;
+    this.meshCollector.reset();
     this.homed = { x: false, y: false, z: false };
     this.tempHistory = [];
+    this.persistedSettings = null;
+    this.persistedMesh = null;
+    this.persistedLevelingOn = false;
+    this.saveVerification = null;
+    this.recoveringReset = false;
+  }
+
+  private persistenceDirty(): boolean {
+    if (this.persistedSettings === null) return false;
+    return (
+      settingMismatches(this.persistedSettings, this.settings).length > 0 ||
+      this.persistedLevelingOn !== this.levelingOn ||
+      !meshesEqual(this.persistedMesh, this.mesh)
+    );
   }
 
   private pushLog(dir: 'rx' | 'tx' | 'sys', text: string): void {
@@ -562,4 +847,41 @@ export class Printer extends EventEmitter {
 
 function delay(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function errorText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function settingMismatches(
+  expected: Record<string, Record<string, number>>,
+  actual: Record<string, Record<string, number>>,
+): string[] {
+  const mismatches: string[] = [];
+  const codes = new Set([...Object.keys(expected), ...Object.keys(actual)]);
+  for (const code of codes) {
+    const expectedParams = expected[code] ?? {};
+    const actualParams = actual[code] ?? {};
+    const fields = new Set([...Object.keys(expectedParams), ...Object.keys(actualParams)]);
+    for (const field of fields) {
+      const wanted = expectedParams[field];
+      const got = actualParams[field];
+      if (wanted === undefined || got === undefined || Math.abs(wanted - got) > 0.0005) {
+        mismatches.push(`${code} ${field} expected ${wanted ?? 'missing'}, got ${got ?? 'missing'}`);
+      }
+    }
+  }
+  return mismatches;
+}
+
+function meshesEqual(expected: number[][] | null, actual: number[][] | null): boolean {
+  if (expected === null || actual === null) return expected === actual;
+  return (
+    expected.length === actual.length &&
+    expected.every(
+      (row, rowIndex) =>
+        row.length === actual[rowIndex]?.length &&
+        row.every((value, columnIndex) => Math.abs(value - (actual[rowIndex]?.[columnIndex] ?? Number.NaN)) <= 0.0005),
+    )
+  );
 }

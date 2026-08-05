@@ -8,6 +8,7 @@ export type SimOptions = {
   machine?: string;
   fastAutotune?: boolean;
   noBedPid?: boolean;
+  sdPrintStatus?: 'idle' | 'printing' | 'unknown';
 };
 
 type Heater = { current: number; target: number; power: number; ambient: number; rate: number; loss: number };
@@ -73,7 +74,7 @@ export class MarlinSim extends EventEmitter {
   private meshValid = false;
   private mesh: number[][] = [];
   private settings = new Map<string, Record<string, number>>();
-  private savedSettings: string | null = null;
+  private savedState: string | null = null;
   private endstops: Record<string, string> = {
     x_min: 'open',
     y_min: 'open',
@@ -100,6 +101,16 @@ export class MarlinSim extends EventEmitter {
       this.out('echo:EEPROM version mismatch (EEPROM=? Marlin=V87)');
       this.out('echo:Hardcoded Default Settings Loaded');
     }, 120);
+  }
+
+  resetBoard(): void {
+    this.hotend.target = 0;
+    this.bed.target = 0;
+    this.pos = { x: 0, y: 0, z: 0, e: 0 };
+    this.homed = { x: false, y: false, z: false };
+    this.out('start');
+    this.out('echo: External Reset');
+    this.out(`echo:${this.firmwareVersion()}`);
   }
 
   stop(): void {
@@ -222,6 +233,12 @@ export class MarlinSim extends EventEmitter {
         this.out(`ok ${this.tempLine()}`);
         return;
 
+      case 'M27':
+        if (this.opts.sdPrintStatus === 'printing') this.out('SD printing byte 128/1024');
+        else if (this.opts.sdPrintStatus === 'unknown') this.out('echo:SD status unavailable');
+        else this.out('Not SD printing');
+        break;
+
       case 'M155': {
         const s = args['S'] ?? 0;
         if (this.autoreportTimer) clearInterval(this.autoreportTimer);
@@ -330,14 +347,31 @@ export class MarlinSim extends EventEmitter {
         break;
 
       case 'M500':
-        this.savedSettings = JSON.stringify([...this.settings]);
+        this.savedState = JSON.stringify({
+          settings: [...this.settings],
+          mesh: this.mesh,
+          meshValid: this.meshValid,
+          levelingOn: this.levelingOn,
+        });
         this.out('echo:Settings Stored (656 bytes; crc 41276)');
         break;
 
-      case 'M501':
-        if (this.savedSettings) this.settings = new Map(JSON.parse(this.savedSettings));
+      case 'M501': {
+        if (this.savedState) {
+          const saved = JSON.parse(this.savedState) as {
+            settings: [string, Record<string, number>][];
+            mesh: number[][];
+            meshValid: boolean;
+            levelingOn: boolean;
+          };
+          this.settings = new Map(saved.settings);
+          this.mesh = saved.mesh;
+          this.meshValid = saved.meshValid;
+          this.levelingOn = saved.levelingOn;
+        }
         this.out('echo:Stored settings retrieved');
         break;
+      }
 
       case 'M502':
         this.resetSettings();
