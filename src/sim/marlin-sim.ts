@@ -7,6 +7,8 @@ export type SimOptions = {
   firmwareName?: string;
   machine?: string;
   fastAutotune?: boolean;
+  /** Zero-based index of a G30 that should fail silently, as a real probe sometimes does. */
+  probeFailsAt?: number;
   noBedPid?: boolean;
   sdPrintStatus?: 'idle' | 'printing' | 'unknown';
 };
@@ -62,6 +64,7 @@ export class MarlinSim extends EventEmitter {
   private autoreportTimer?: NodeJS.Timeout;
   private busyTimer?: NodeJS.Timeout;
   private blocked = false;
+  private probeCount = 0;
   private pendingQueue: string[] = [];
 
   private hotend: Heater = { current: 21.4, target: 0, power: 0, ambient: 21.4, rate: 4.0, loss: 0.055 };
@@ -304,6 +307,25 @@ export class MarlinSim extends EventEmitter {
       case 'G29':
         this.doProbe();
         return;
+
+      case 'G30': {
+        // Marlin's exact wording, no space after the colons, three decimals on Z.
+        const px = args['X'] ?? this.pos.x;
+        const py = args['Y'] ?? this.pos.y;
+        const z = Number((Math.sin(px / 90) * 0.06 + Math.cos(py / 110) * 0.05 - 0.02).toFixed(3));
+        setTimeout(() => {
+          if (this.opts.probeFailsAt !== undefined && this.opts.probeFailsAt === this.probeCount) {
+            // A failed probe prints nothing at all — that silence is what the host must cope with.
+            this.probeCount++;
+            this.finishBlocking();
+            return;
+          }
+          this.probeCount++;
+          this.out(`Bed X:${px.toFixed(2)} Y:${py.toFixed(2)} Z:${z.toFixed(3)}`);
+          this.finishBlocking();
+        }, 220);
+        return;
+      }
 
       case 'G0':
       case 'G1':

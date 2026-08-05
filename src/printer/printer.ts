@@ -14,7 +14,7 @@ import {
   type MachineLimits,
   type MachineLimitOverrides,
 } from './limits.ts';
-import { analyzeMesh, MeshCollector, type MeshAnalysis } from './mesh.ts';
+import { analyzeMesh, MeshCollector, screwAdviceFromPoints, type MeshAnalysis, type ScrewAdvice, type ScrewCorner } from './mesh.ts';
 import { presetById, stepById, type CommissioningStep, type FilamentPreset } from './commissioning.ts';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
@@ -40,6 +40,13 @@ export type PrinterStateSnapshot = {
   /* Live probing progress. total is null when the firmware reports no count — an indeterminate
      state is honest, an invented percentage is not. */
   probing: { active: boolean; done: number; total: number | null } | null;
+  /* Z-offset wizard: while active the printer's own M851 Z is temporarily zeroed, so the accumulated
+     babystep IS the offset. originalZ is what gets restored if the wizard is abandoned. */
+  zOffsetWizard: { active: boolean; originalZ: number; centre: { x: number; y: number } } | null;
+  /* Last direct G30 measurement at the screw positions. Lives in state rather than being a one-shot
+     client render, because the card must say which source the numbers came from: grid-interpolated
+     and directly probed advice deserve different amounts of trust, and a stale label misleads. */
+  screwMeasurement: { at: number; points: { corner: ScrewCorner; x: number; y: number; z: number }[]; advice: ScrewAdvice[] } | null;
   busy: string | null;
   halted: boolean;
   fan: number;
@@ -71,6 +78,7 @@ export type ConnectTarget =
       corruptPrefixCount?: number;
       /** Override reported M115 capabilities, e.g. a firmware built without a probe. */
       caps?: Record<string, boolean>;
+      probeFailsAt?: number;
     };
 
 export type SdPrintStatus = 'idle' | 'printing' | 'unknown';
@@ -167,6 +175,13 @@ export class Printer extends EventEmitter {
   private mesh: number[][] | null = null;
   private meshCollector = new MeshCollector();
   private probing: { active: boolean; done: number; total: number | null } | null = null;
+  private zWizard: { active: boolean; originalZ: number; centre: { x: number; y: number } } | null = null;
+  private lastProbePoint: { x: number; y: number; z: number } | null = null;
+  private screwMeasurement: {
+    at: number;
+    points: { corner: ScrewCorner; x: number; y: number; z: number }[];
+    advice: ScrewAdvice[];
+  } | null = null;
   private fan = 0;
   private eepromSaves = 0;
   private lastSaveAt = 0;
@@ -205,6 +220,8 @@ export class Printer extends EventEmitter {
       endstops: { ...this.endstops },
       settings: structuredClone(this.settings),
       probing: this.probing ? { ...this.probing } : null,
+      zOffsetWizard: this.zWizard ? { ...this.zWizard, centre: { ...this.zWizard.centre } } : null,
+      screwMeasurement: this.screwMeasurement ? structuredClone(this.screwMeasurement) : null,
       leveling: {
         on: this.levelingOn,
         mesh: this.mesh,
@@ -271,6 +288,7 @@ export class Printer extends EventEmitter {
             sdPrintStatus: target.sdPrintStatus ?? 'idle',
             corruptPrefixCount: target.corruptPrefixCount ?? 0,
             ...(target.caps ? { caps: target.caps } : {}),
+            ...(target.probeFailsAt !== undefined ? { probeFailsAt: target.probeFailsAt } : {}),
           })
         : new SerialTransport(target.path, target.baud);
 
@@ -395,6 +413,10 @@ export class Printer extends EventEmitter {
       this.emitState();
     });
 
+    link.on('probePoint', (p: { x: number; y: number; z: number }) => {
+      this.lastProbePoint = p;
+    });
+
     link.on('position', (p: { x: number; y: number; z: number; e: number }) => {
       this.position = { x: p.x, y: p.y, z: p.z, e: p.e };
       this.emitState();
@@ -460,6 +482,8 @@ export class Printer extends EventEmitter {
     const completed = this.meshCollector.push(raw);
     if (completed) {
       this.mesh = completed;
+      // A fresh grid supersedes an older direct screw measurement.
+      this.screwMeasurement = null;
       this.emitState();
     }
   }
@@ -478,6 +502,15 @@ export class Printer extends EventEmitter {
       this.probing = { active: true, done: (this.probing?.done ?? 0) + 1, total: this.probing?.total ?? null };
       this.emitState();
     }
+  }
+
+  /* Consume-once read of the last G30 result. A method rather than a field read on purpose: the
+     result is only meaningful for the probe that just ran, and reading it through a call also stops
+     control-flow narrowing from wrongly concluding the field is still null after an await. */
+  private takeProbePoint(): { x: number; y: number; z: number } | null {
+    const point = this.lastProbePoint;
+    this.lastProbePoint = null;
+    return point;
   }
 
   private beginProbing(): void {
@@ -707,12 +740,118 @@ export class Printer extends EventEmitter {
     }
   }
 
-  /* One guided pass: probe the bed, switch compensation on, persist it, and read it back.
+  /* Probe each screw position directly with G30 instead of interpolating the grid. Slower, but the
+     numbers land exactly where the wrench goes, and G30 reports each point so a failed probe is
+     visible rather than averaged away. Deliberately does not enable compensation or save: this mode
+     exists for the mechanical pass, where hiding the error in software defeats the purpose. */
+  async measureScrewPoints(confirmed: boolean): Promise<{
+    points: { corner: ScrewCorner; x: number; y: number; z: number }[];
+    failed: string[];
+    advice: ScrewAdvice[];
+  }> {
+    if (!confirmed) {
+      throw new SafetyError('needs_confirm', 'замер по точкам винтов двигает оси — нужно явное подтверждение');
+    }
+    if (this.caps['Z_PROBE'] === false) {
+      throw new SafetyError('no_probe', 'прошивка не сообщает о поддержке зонда — G30 недоступен');
+    }
+
+    const { bedSize, bedScrews } = this.limits;
+    const inset = bedScrews.inset;
+    const targets = [
+      { corner: 'frontLeft' as ScrewCorner, x: inset, y: inset },
+      { corner: 'frontRight' as ScrewCorner, x: bedSize.x - inset, y: inset },
+      { corner: 'backLeft' as ScrewCorner, x: inset, y: bedSize.y - inset },
+      { corner: 'backRight' as ScrewCorner, x: bedSize.x - inset, y: bedSize.y - inset },
+    ];
+
+    await this.home('');
+    this.beginProbing();
+    const points: { corner: ScrewCorner; x: number; y: number; z: number }[] = [];
+    const failed: string[] = [];
+    try {
+      for (const [index, target] of targets.entries()) {
+        this.takeProbePoint();
+        this.probing = { active: true, done: index, total: targets.length };
+        this.emitState();
+        const result = await this.requireLink().send(`G30 X${target.x} Y${target.y}`);
+        // Marlin prints nothing when a probe fails, so silence is the error — never read it as zero.
+        const measured = this.takeProbePoint();
+        if (!result.ok || measured === null) {
+          failed.push(target.corner);
+          continue;
+        }
+        points.push({ corner: target.corner, x: measured.x, y: measured.y, z: measured.z });
+      }
+    } finally {
+      this.endProbing();
+    }
+    this.sys(`замер по винтам: получено ${points.length}/${targets.length} точек`);
+    /* Advice from fewer than all four screws would be levelling to an incomplete reference, so it is
+       withheld rather than shown as if it were trustworthy. */
+    const advice = points.length === targets.length ? screwAdviceFromPoints(points, bedScrews) : [];
+    this.screwMeasurement = advice.length > 0 ? { at: Date.now(), points, advice } : null;
+    this.emitState();
+    return { points, failed, advice };
+  }
+
+  /* Prepare the machine so the accumulated babystep IS the Z-offset.
+     Zeroing M851 Z makes Z0 the probe trigger height, which sits ABOVE the bed because the pin
+     extends below the nozzle — so this is the safe direction to start from. The user then walks the
+     nozzle down to real contact with paper, and that distance is the offset. */
+  async startZOffsetWizard(confirmed: boolean): Promise<{ originalZ: number; centre: { x: number; y: number } }> {
+    if (!confirmed) {
+      throw new SafetyError('needs_confirm', 'мастер Z-offset двигает оси и обнуляет M851 Z — нужно явное подтверждение');
+    }
+    if (this.caps['Z_PROBE'] === false) {
+      throw new SafetyError('no_probe', 'прошивка не сообщает о поддержке зонда — мастер недоступен');
+    }
+    if (this.zWizard?.active) throw new SafetyError('already_active', 'мастер Z-offset уже запущен');
+
+    const originalZ = this.settings['M851']?.['Z'] ?? 0;
+    const centre = { x: Math.round(this.limits.bedSize.x / 2), y: Math.round(this.limits.bedSize.y / 2) };
+
+    await this.setProbeOffset({ z: 0 }, false);
+    await this.home('');
+    const link = this.requireLink();
+    await link.send(`G1 X${centre.x} Y${centre.y} F3000`);
+    await link.send('G1 Z0 F300');
+    await link.send('M114');
+
+    this.zWizard = { active: true, originalZ, centre };
+    this.sys(`мастер Z-offset: M851 Z обнулён (было ${originalZ}), сопло в центре на Z0`);
+    this.emitState();
+    return { originalZ, centre };
+  }
+
+  /* Abandoning the wizard must put the printer back exactly as it was, or the user is left with a
+     zeroed offset and no idea why the first layer is wrong. */
+  async cancelZOffsetWizard(): Promise<{ restoredZ: number }> {
+    if (!this.zWizard?.active) throw new SafetyError('not_active', 'мастер Z-offset не запущен');
+    const { originalZ } = this.zWizard;
+    this.zWizard = null;
+    await this.requireLink().send('G1 Z10 F300');
+    await this.setProbeOffset({ z: originalZ }, false);
+    this.sys(`мастер Z-offset отменён, M851 Z возвращён в ${originalZ}`);
+    this.emitState();
+    return { restoredZ: originalZ };
+  }
+
+  finishZOffsetWizard(): void {
+    if (this.zWizard) {
+      this.zWizard = null;
+      this.emitState();
+    }
+  }
+
+  /* One guided pass over the bed. Mode decides how far it goes:
+       'full'        — probe, enable compensation, persist, read back
+       'measureOnly' — probe and show, leave compensation off and save nothing
      "Setting the offsets per point" IS the mesh — Marlin stores the grid and applies it, so there is
      nothing separate to write. What this cannot do is fix the bed: compensation hides warp in
      software, the screws are the only physical remedy, which is why the screw advice comes back with
      the report. */
-  async autoConfigureBed(confirmed: boolean): Promise<{
+  async autoConfigureBed(confirmed: boolean, mode: 'full' | 'measureOnly' = 'full'): Promise<{
     steps: { name: string; ok: boolean; detail: string }[];
     saved: SaveVerification | null;
     analysis: MeshAnalysis | null;
@@ -757,6 +896,18 @@ export class Printer extends EventEmitter {
       return { steps, saved: null, analysis: null, levelingOn: this.levelingOn };
     }
     steps.push({ name: 'mesh', ok: true, detail: `${this.mesh.length}×${this.mesh[0]?.length ?? 0} точек` });
+
+    if (mode === 'measureOnly') {
+      // Explicitly off rather than merely "not turned on": G28 may have enabled it in some builds.
+      record('M420 S0', await this.setLeveling(false));
+      steps.push({
+        name: 'M500',
+        ok: true,
+        detail: 'пропущено намеренно: режим только измеряет, сетка не сохраняется',
+      });
+      const measured = this.snapshot();
+      return { steps, saved: null, analysis: measured.leveling.analysis, levelingOn: this.levelingOn };
+    }
 
     record('M420 S1', await this.setLeveling(true));
 

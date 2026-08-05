@@ -7,6 +7,9 @@ export type ParsedLine =
   | { kind: 'error'; text: string; fatal: boolean; expectsResend: boolean }
   | { kind: 'temp'; temps: TempReport }
   | { kind: 'position'; x: number; y: number; z: number; e: number }
+  /* Single-point probe result from G30. Marlin prints nothing at all when the probe fails, so the
+     absence of this line is itself the error signal — never treat a missing value as zero. */
+  | { kind: 'probePoint'; x: number; y: number; z: number }
   | { kind: 'endstops'; states: Record<string, string> }
   | { kind: 'cap'; name: string; enabled: boolean }
   | { kind: 'firmware'; fields: Record<string, string> }
@@ -30,6 +33,8 @@ const RE_ERROR = /^(?:Error|!!)\s*:?\s*(.*)$/i;
 const RE_TEMP_TOKEN = /(T\d?|B|C|P|R|A):\s*(-?[\d.]+)\s*(?:\/\s*(-?[\d.]+))?/g;
 const RE_POWER = /(?:@(\d?)|B@|C@)\s*:\s*(-?\d+)/g;
 const RE_POSITION = /^X:\s*(-?[\d.]+)\s+Y:\s*(-?[\d.]+)\s+Z:\s*(-?[\d.]+)\s+E:\s*(-?[\d.]+)/;
+// Marlin: SString(F("Bed X:"), x, F(" Y:"), y, F(" Z:"), z) — no space after the colons.
+const RE_PROBE_POINT = /^Bed\s+X:\s*(-?[\d.]+)\s+Y:\s*(-?[\d.]+)\s+Z:\s*(-?[\d.]+)/i;
 const RE_ENDSTOP = /([a-z0-9_ ]+):\s*(TRIGGERED|open)/gi;
 const RE_CAP = /^Cap\s*:\s*([A-Z0-9_]+)\s*:\s*([01])/i;
 const RE_ACTION = /^\/\/\s*action\s*:\s*(.+)$/i;
@@ -73,6 +78,16 @@ export function parseLine(raw: string): ParsedLine {
     const fields = readOkFields(rest);
     const temps = parseTemps(rest);
     return { kind: 'ok', ...fields, ...(temps ? { temps } : {}) };
+  }
+
+  const probePoint = RE_PROBE_POINT.exec(text);
+  if (probePoint) {
+    return {
+      kind: 'probePoint',
+      x: Number(probePoint[1]),
+      y: Number(probePoint[2]),
+      z: Number(probePoint[3]),
+    };
   }
 
   const pos = RE_POSITION.exec(text);

@@ -238,6 +238,10 @@ export class Link extends EventEmitter {
         this.emit('position', parsed);
         break;
 
+      case 'probePoint':
+        this.emit('probePoint', parsed);
+        break;
+
       case 'endstops':
         this.emit('endstops', parsed.states);
         break;

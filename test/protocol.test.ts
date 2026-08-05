@@ -237,3 +237,17 @@ test('unknown command surfaces as a non-fatal error result', async () => {
     assert.ok(res.lines.some((l) => /Unknown command/i.test(l)));
   });
 });
+
+test('parses the G30 single-point probe result in Marlin\'s exact format', () => {
+  // Marlin emits no space after the colons and three decimals on Z.
+  const p = parseLine('Bed X:150.00 Y:150.00 Z:-1.234');
+  assert.equal(p.kind, 'probePoint');
+  if (p.kind !== 'probePoint') throw new Error('expected probePoint');
+  assert.equal(p.x, 150);
+  assert.equal(p.y, 150);
+  assert.equal(p.z, -1.234);
+
+  // Must not be confused with the M114 position report, which has no "Bed" prefix and carries E.
+  const position = parseLine('X:150.00 Y:150.00 Z:-1.23 E:0.00 Count X:1 Y:1 Z:1');
+  assert.equal(position.kind, 'position');
+});

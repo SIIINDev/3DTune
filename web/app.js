@@ -243,7 +243,8 @@ function applyState(s) {
   safe('endstops', () => renderEndstops(s.endstops));
   safe('probing', () => renderProbing(s.probing));
   safe('mesh', () => renderMesh(s.leveling));
-  safe('screws', () => renderScrews(s.leveling?.analysis));
+  safe('screws', () => renderScrews(s));
+  safe('zWizard', () => renderZWizard(s));
   safe('commissioning', () => {
     // Probe-only steps are hidden when the firmware reports no probe, so this follows capabilities.
     const probeKnown = s.connection.caps.Z_PROBE !== undefined;
@@ -409,6 +410,22 @@ const SCREW_ORDER = ['backLeft', 'backRight', 'frontLeft', 'frontRight'];
 
 /* Progress comes from Marlin's own "Probing point N/M." lines. When a build announces nothing,
    the bar goes indeterminate instead of showing a number nobody measured. */
+function renderZWizard(s) {
+  const active = s.zOffsetWizard?.active === true;
+  $('zWizardStart').hidden = active;
+  $('zWizardCancel').hidden = !active;
+  const label = $('zWizardState');
+  if (!active) {
+    label.textContent = '';
+    return;
+  }
+  const centre = s.zOffsetWizard.centre;
+  const current = s.settings?.M851?.Z ?? 0;
+  label.textContent =
+    `идёт: сопло в X${centre.x} Y${centre.y}, M851 Z обнулён (было ${s.zOffsetWizard.originalZ}), ` +
+    `сейчас ${current}. Опускай Z до бумаги, затем «Зафиксировать в M851».`;
+}
+
 function renderProbing(probing) {
   const box = $('probingLive');
   if (!probing?.active) {
@@ -438,12 +455,23 @@ function renderProbing(probing) {
   }
 }
 
-function renderScrews(analysis) {
+/* A direct G30 measurement beats grid interpolation, but only while it is the newer of the two: a
+   later G29 clears it server-side, so whichever source is shown is always the fresher one. */
+function renderScrews(s) {
+  const measured = s.screwMeasurement;
+  if (measured?.advice?.length) {
+    renderScrewAdvice(measured.advice, 'измерено G30 прямо в точках винтов');
+    return;
+  }
+  renderScrewAdvice(s.leveling?.analysis?.screws ?? [], 'интерполировано по сетке G29');
+}
+
+/* Same card for both sources, but it says which one it is: grid-interpolated advice and directly
+   probed advice deserve different amounts of trust. */
+function renderScrewAdvice(screws, source) {
   const box = $('screwMap');
   const note = $('screwAssumption');
   box.replaceChildren();
-
-  const screws = analysis?.screws ?? [];
   if (screws.length === 0) {
     box.dataset.empty = 'true';
     const span = document.createElement('span');
@@ -507,6 +535,7 @@ function renderScrews(analysis) {
   box.appendChild(front);
 
   note.textContent =
+    `Источник: ${source}. ` +
     'Отсчёт от средней высоты четырёх винтов, поэтому Z-offset почти не сдвигается. ' +
     'Допущения: шаг винта 0.5 мм за оборот (M3) и «затянуть» опускает стол. ' +
     'Проверь направление один раз на своём принтере: если стол пошёл не туда, поменяй ' +
@@ -913,7 +942,7 @@ $('applyProbeOffset').onclick = async () => {
   reportPersisted(result, 'M851');
 };
 
-$('autoConfigureBed').onclick = async () => {
+async function runBedConfiguration(mode) {
   if (
     !confirm(
       'Полная конфигурация стола:\n\n' +
@@ -936,7 +965,7 @@ $('autoConfigureBed').onclick = async () => {
   list.hidden = true;
 
   try {
-    const report = await rpc('autoConfigureBed', { confirmed: true });
+    const report = await rpc('autoConfigureBed', { confirmed: true, mode });
     list.hidden = false;
     for (const step of report.steps ?? []) {
       const li = document.createElement('li');
@@ -960,6 +989,64 @@ $('autoConfigureBed').onclick = async () => {
   } finally {
     button.disabled = false;
   }
+}
+
+$('autoConfigureBed').onclick = () => runBedConfiguration('full');
+
+$('bedModeMeasure').onclick = () => runBedConfiguration('measureOnly');
+
+$('bedModeScrews').onclick = async () => {
+  if (
+    !confirm(
+      'Замер по 4 точкам винтов:\n\n' +
+        'G28, затем G30 в каждой точке винта. Принтер будет двигаться.\n' +
+        'Компенсация не включается и в EEPROM ничего не пишется — это замер для работы ключом.\n\nПродолжить?',
+    )
+  ) {
+    return;
+  }
+  const button = $('bedModeScrews');
+  const status = $('autoConfigureStatus');
+  button.disabled = true;
+  status.textContent = 'замер по винтам…';
+  $('autoConfigureSteps').hidden = true;
+  try {
+    const result = await rpc('measureScrewPoints', { confirmed: true });
+    if (result.failed.length > 0) {
+      status.textContent = `зонд не сработал в точках: ${result.failed.join(', ')} — повтори замер`;
+      toast(`Не удалось замерить ${result.failed.length} из 4 точек. Подсказки по винтам не показаны: неполная база отсчёта.`);
+    } else {
+      status.textContent = 'замер по винтам готов — подсказки ниже посчитаны по фактическим точкам';
+      toast('Замер по 4 винтам выполнен', 'good');
+    }
+  } catch (err) {
+    status.textContent = `ошибка: ${err.message}`;
+    toast(err.message);
+  } finally {
+    button.disabled = false;
+  }
+};
+
+$('zWizardStart').onclick = async () => {
+  if (
+    !confirm(
+      'Мастер Z-offset:\n\n' +
+        '1. M851 Z обнулится (прежнее значение запомнится)\n' +
+        '2. G28 — home всех осей\n' +
+        '3. сопло встанет в центр стола на Z0\n\n' +
+        'Z0 — это высота срабатывания щупа, она выше стола, поэтому сопло не воткнётся.\n' +
+        'Прогрей сопло и стол до рабочих температур заранее: горячий стол имеет другую форму.\n\nПродолжить?',
+    )
+  ) {
+    return;
+  }
+  await call('startZOffsetWizard', { confirmed: true }, 'Мастер запущен: опускай Z до листа бумаги');
+};
+
+$('zWizardCancel').onclick = async () => {
+  if (!confirm('Отменить мастер и вернуть прежний M851 Z?')) return;
+  const result = await call('cancelZOffsetWizard', {});
+  toast(`Мастер отменён, M851 Z возвращён в ${result.restoredZ}`, 'good');
 };
 
 $('runG29').onclick = async () => {

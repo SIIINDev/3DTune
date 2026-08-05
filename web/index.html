@@ -232,6 +232,19 @@
         <button id="applyProbeOffset" class="primary mini">Применить M851</button>
       </div>
 
+      <h3>Мастер Z-offset</h3>
+      <p class="note">
+        Обнуляет <code>M851 Z</code>, паркует сопло в центре на <code>Z0</code> — это высота
+        срабатывания щупа, она <b>выше</b> стола, потому что щуп выступает ниже сопла. Дальше опускаешь
+        сопло кнопками ниже до листа бумаги: пройденное расстояние и есть offset. Отмена возвращает
+        прежнее значение.
+      </p>
+      <div class="row">
+        <button id="zWizardStart" class="primary mini">Запустить мастер</button>
+        <button id="zWizardCancel" class="ghost mini" hidden>Отменить и вернуть как было</button>
+        <span id="zWizardState" class="small muted"></span>
+      </div>
+
       <h3>Живая подстройка Z (M290)</h3>
       <p class="note">Крути на горячем сопле по «бумажке», затем зафиксируй в M851. Фиксация сразу пишет значение в EEPROM принтера и перечитывает его — оно переживёт выключение питания и будет работать без компьютера.</p>
       <div class="row" role="group" aria-label="Живая подстройка Z, мм">
@@ -252,7 +265,18 @@
         Компенсация прячет кривизну в софте; физически стол выправляют только винты.
       </p>
       <div class="row">
-        <button id="autoConfigureBed" class="primary">Прощупать стол и сохранить</button>
+        <button id="bedModeScrews" class="ghost">По 4 винтам — точный замер</button>
+        <button id="bedModeMeasure" class="ghost">Только замерить, без компенсации</button>
+        <button id="autoConfigureBed" class="primary">Полная настройка и сохранить</button>
+      </div>
+      <p class="note" id="bedModeHint">
+        <b>По 4 винтам</b> — <code>G30</code> в каждой точке винта: числа приходят ровно туда, куда лезешь
+        ключом, без интерполяции по сетке. Ничего не включает и не сохраняет.<br>
+        <b>Только замерить</b> — полная сетка, но компенсация остаётся выключенной и в EEPROM не пишется:
+        для механического прохода, когда нужно видеть чистую кривизну.<br>
+        <b>Полная настройка</b> — снять сетку, включить компенсацию, записать и перечитать.
+      </p>
+      <div class="row">
         <span id="autoConfigureStatus" class="small muted"></span>
       </div>
       <ol id="autoConfigureSteps" class="steps" hidden></ol>

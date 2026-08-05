@@ -311,10 +311,24 @@ export function startServer(opts: ServerOptions): ServerHandle {
         audit('G28 + G29');
         return printer.runBedLeveling(Boolean(p['confirmed']));
 
-      case 'autoConfigureBed':
-        audit('G28 + G29 + M420 S1 + M500');
+      case 'autoConfigureBed': {
+        const mode = p['mode'] === 'measureOnly' ? 'measureOnly' : 'full';
+        audit(mode === 'measureOnly' ? 'G28 + G29 + M420 S0 (без записи)' : 'G28 + G29 + M420 S1 + M500');
         spendHeatToken(client);
-        return printer.autoConfigureBed(Boolean(p['confirmed']));
+        return printer.autoConfigureBed(Boolean(p['confirmed']), mode);
+      }
+
+      case 'measureScrewPoints':
+        audit('G28 + G30 x4');
+        return printer.measureScrewPoints(Boolean(p['confirmed']));
+
+      case 'startZOffsetWizard':
+        audit('M851 Z0 + G28 + центр + Z0');
+        return printer.startZOffsetWizard(Boolean(p['confirmed']));
+
+      case 'cancelZOffsetWizard':
+        audit('восстановление M851 Z');
+        return printer.cancelZOffsetWizard();
 
       case 'setLeveling':
         audit(Boolean(p['on']) ? 'on' : 'off');

@@ -235,6 +235,29 @@ export function screwAdvice(
   });
 }
 
+/* Advice from directly measured points. Same arithmetic as the grid version, but the heights are
+   real probe readings at the screw positions instead of an interpolation, so the numbers are only as
+   wrong as the probe itself. */
+export function screwAdviceFromPoints(
+  points: { corner: ScrewCorner; x: number; y: number; z: number }[],
+  geometry: BedScrewGeometry = KP5L_BED_SCREWS,
+): ScrewAdvice[] {
+  if (points.length === 0 || !(geometry.pitchMm > 0)) return [];
+  const reference = average(points.map((point) => point.z));
+
+  return points.map(({ corner, x, y, z }) => {
+    const deltaMm = reference - z;
+    const magnitude = Math.abs(deltaMm);
+    if (magnitude < geometry.deadbandMm) {
+      return { corner, x, y, height: z, deltaMm, action: 'leave' as const, turns: 0, turnLabel: '—' };
+    }
+    const mustRise = deltaMm > 0;
+    const action = mustRise === geometry.tighteningLowersBed ? ('loosen' as const) : ('tighten' as const);
+    const turns = magnitude / geometry.pitchMm;
+    return { corner, x, y, height: z, deltaMm, action, turns, turnLabel: formatTurns(turns) };
+  });
+}
+
 /** Bilinear sample in normalised grid space, clamped: the probe grid is inset from the bed edges,
     so a screw outside it reads the nearest measured point rather than an extrapolated guess. */
 function sampleMesh(mesh: number[][], fx: number, fy: number): number {
