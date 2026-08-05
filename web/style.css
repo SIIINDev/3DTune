@@ -964,3 +964,290 @@ canvas {
     grid-column: 1;
   }
 }
+
+/* ---------- commissioning wizard ---------- */
+
+.stage {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+.stage-head {
+  padding: 10px 12px;
+  background: var(--plane);
+  display: grid;
+  gap: 3px;
+}
+.stage-title {
+  font-weight: 600;
+  font-size: 14px;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.stage-count {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.stage-intro {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+.step {
+  border-top: 1px solid var(--hair);
+  padding: 11px 12px;
+  display: grid;
+  gap: 7px;
+}
+.step[data-done="true"] {
+  background: color-mix(in oklab, var(--st-good) 6%, transparent);
+}
+.step-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.step-head input[type="checkbox"] {
+  margin-top: 3px;
+  flex: none;
+}
+.step-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.step[data-done="true"] .step-title {
+  color: var(--muted);
+  text-decoration: line-through;
+}
+.step-hazard {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 7px;
+  border-radius: 20px;
+  border: 1px solid;
+  white-space: nowrap;
+  flex: none;
+}
+.step-hazard[data-hazard="motion"] {
+  color: var(--st-serious);
+  border-color: var(--st-serious);
+}
+.step-hazard[data-hazard="heat"] {
+  color: var(--st-crit);
+  border-color: var(--st-crit);
+}
+.step-why {
+  font-size: 12.5px;
+  color: var(--ink-2);
+}
+.step-block {
+  font-size: 12.5px;
+  border-left: 2px solid var(--hair);
+  padding-left: 9px;
+}
+.step-block b {
+  display: block;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+.step-block[data-kind="physical"] {
+  border-left-color: var(--s-bed);
+}
+.step-block[data-kind="pass"] {
+  border-left-color: var(--st-good);
+}
+.step-block[data-kind="cannot"] {
+  border-left-color: var(--st-warn);
+}
+.step-gcode {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--ink-2);
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.step-gcode span {
+  background: var(--plane);
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+.step-result {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.step-result[data-ok="false"] {
+  color: var(--st-crit);
+}
+.step-result[data-ok="true"] {
+  color: var(--st-good);
+}
+
+/* ---------- filament presets ---------- */
+
+.presets {
+  display: grid;
+  gap: 9px;
+}
+.preset {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-sm);
+  padding: 10px 11px;
+  background: var(--plane);
+  display: grid;
+  gap: 5px;
+}
+.preset-head {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+}
+.preset-name {
+  font-weight: 600;
+  font-size: 14px;
+}
+.preset-temps {
+  font-size: 12px;
+  color: var(--ink-2);
+  font-variant-numeric: tabular-nums;
+  margin-left: auto;
+}
+.preset-slicer,
+.preset-notes {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+.preset-slicer::before {
+  content: "слайсер: ";
+  color: var(--muted);
+}
+
+/* ---------- probing animation ---------- */
+
+.probing {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--s-bed);
+  border-radius: var(--radius-sm);
+  padding: 9px 11px;
+  margin-bottom: 9px;
+  background: color-mix(in oklab, var(--s-bed) 7%, transparent);
+}
+.probe-pin {
+  width: 34px;
+  height: 54px;
+  flex: none;
+}
+.probe-body {
+  fill: none;
+  stroke: var(--ink-2);
+  stroke-width: 2;
+}
+.probe-needle {
+  stroke: var(--s-bed);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.probe-tip {
+  fill: var(--s-bed);
+}
+.probe-bed {
+  stroke: var(--axis);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+/* The needle and tip travel down to the bed and retract, once per probed point. */
+.probing[data-active="true"] .probe-needle {
+  animation: probe-extend 1.1s ease-in-out infinite;
+}
+.probing[data-active="true"] .probe-tip {
+  animation: probe-touch 1.1s ease-in-out infinite;
+}
+@keyframes probe-extend {
+  0%, 100% { transform: translateY(0) scaleY(1); }
+  45% { transform: translateY(0) scaleY(1.9); }
+}
+@keyframes probe-touch {
+  0%, 100% { transform: translateY(0); }
+  45% { transform: translateY(9px); }
+}
+
+.probing-text {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+}
+.probing-track {
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--s-bed) 18%, var(--surface));
+  overflow: hidden;
+}
+.probing-track i {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 3px;
+  background: var(--s-bed);
+  transition: width 0.25s ease;
+}
+/* Total unknown: an indeterminate sweep rather than an invented percentage. */
+.probing[data-indeterminate="true"] .probing-track i {
+  width: 34% !important;
+  animation: probe-sweep 1.4s ease-in-out infinite;
+}
+@keyframes probe-sweep {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(320%); }
+}
+
+/* A probed cell flashes as its measurement lands. */
+.mesh-cell[data-probing="true"] {
+  outline: 2px solid var(--s-bed);
+  outline-offset: -2px;
+  animation: cell-land 0.5s ease-out;
+}
+@keyframes cell-land {
+  from { transform: scale(1.12); }
+  to { transform: scale(1); }
+}
+
+/* Axis readout pulses while that axis is homing. */
+.kv dd[data-busy="true"] {
+  animation: value-pulse 1s ease-in-out infinite;
+}
+@keyframes value-pulse {
+  50% { opacity: 0.42; }
+}
+
+/* Heater meters breathe while actively driving power in. */
+.meter[data-heating="true"] i {
+  animation: heat-breathe 1.6s ease-in-out infinite;
+}
+@keyframes heat-breathe {
+  50% { filter: brightness(1.45); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .probing[data-active="true"] .probe-needle,
+  .probing[data-active="true"] .probe-tip,
+  .probing[data-indeterminate="true"] .probing-track i,
+  .mesh-cell[data-probing="true"],
+  .kv dd[data-busy="true"],
+  .meter[data-heating="true"] i {
+    animation: none;
+  }
+}

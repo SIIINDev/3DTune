@@ -471,7 +471,8 @@ export class MarlinSim extends EventEmitter {
         row.push(Number((Math.sin(i * 0.9) * 0.09 + Math.cos(j * 1.1) * 0.06 - 0.02).toFixed(3)));
       }
       this.mesh.push(row);
-      this.out(`echo:Probing point ${i * n + n}/${n * n}`);
+      // Real Marlin phrasing, trailing period included, so the host parser is tested against it.
+      this.out(`echo:Probing point ${i * n + n}/${n * n}.`);
       i++;
       if (i >= n) {
         clearInterval(step);

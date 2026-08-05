@@ -141,6 +141,8 @@ async function saveAndVerify(okMessage) {
 function handle(msg) {
   switch (msg.t) {
     case 'hello':
+      // The catalogue lives on the server, so it can only be fetched once the socket is open.
+      void loadPlan();
       chart.setAll(msg.tempHistory ?? []);
       $('term').replaceChildren();
       (msg.log ?? []).forEach(appendLog);
@@ -223,10 +225,27 @@ function applyState(s) {
     .join('  ');
   $('fanValue').textContent = `${Math.round((s.fan / 255) * 100)}%`;
 
+  // While an axis is un-homed and the printer is busy, its readout is not trustworthy yet — say so.
+  const homingNow = s.busy !== null && !(s.homed.x && s.homed.y && s.homed.z);
+  for (const [axis, id] of [['x', 'posX'], ['y', 'posY'], ['z', 'posZ']]) {
+    const el = $(id);
+    if (homingNow && !s.homed[axis]) el.dataset.busy = 'true';
+    else delete el.dataset.busy;
+  }
+
   safe('banners', () => renderBanners(s));
   safe('endstops', () => renderEndstops(s.endstops));
+  safe('probing', () => renderProbing(s.probing));
   safe('mesh', () => renderMesh(s.leveling));
   safe('screws', () => renderScrews(s.leveling?.analysis));
+  safe('commissioning', () => {
+    // Probe-only steps are hidden when the firmware reports no probe, so this follows capabilities.
+    const probeKnown = s.connection.caps.Z_PROBE !== undefined;
+    if (plan && probeKnown && lastProbeCap !== s.connection.caps.Z_PROBE) {
+      lastProbeCap = s.connection.caps.Z_PROBE;
+      renderCommissioning();
+    }
+  });
   safe('leveling', () => {
     $('levelingState').textContent = s.leveling.on ? 'компенсация включена' : 'компенсация выключена';
   });
@@ -260,6 +279,12 @@ function updateChartSummary(s) {
 }
 
 function renderHeater(which, h) {
+  const meter = document.querySelector(`.meter[data-series="${which}"]`);
+  if (meter) {
+    // Breathe only while power is actually going in, not merely because a target is set.
+    if (h.target > 0 && h.power > 0.02) meter.dataset.heating = 'true';
+    else delete meter.dataset.heating;
+  }
   $(`${which}Value`).textContent = `${h.current.toFixed(1)}°`;
   $(`${which}Sub`).textContent = h.target > 0 ? `цель ${h.target.toFixed(0)}°` : 'нагрев выключен';
   $(`${which}Power`).style.width = `${Math.round(Math.min(1, h.power) * 100)}%`;
@@ -375,6 +400,37 @@ const SCREW_LABEL = {
 /* Grid order matches the physical bed: back row on top, front row at the bottom, so the card sits
    the same way round as the bed in front of you. */
 const SCREW_ORDER = ['backLeft', 'backRight', 'frontLeft', 'frontRight'];
+
+/* Progress comes from Marlin's own "Probing point N/M." lines. When a build announces nothing,
+   the bar goes indeterminate instead of showing a number nobody measured. */
+function renderProbing(probing) {
+  const box = $('probingLive');
+  if (!probing?.active) {
+    box.hidden = true;
+    box.dataset.active = 'false';
+    for (const cell of document.querySelectorAll('.mesh-cell[data-probing="true"]')) {
+      delete cell.dataset.probing;
+    }
+    return;
+  }
+
+  box.hidden = false;
+  box.dataset.active = 'true';
+  const known = typeof probing.total === 'number' && probing.total > 0;
+  box.dataset.indeterminate = String(!known);
+  $('probingLabel').textContent = known
+    ? `прощупывание: точка ${probing.done} из ${probing.total}`
+    : 'прощупывание: прошивка не сообщает число точек';
+  $('probingFill').style.width = known ? `${Math.min(100, (probing.done / probing.total) * 100)}%` : '';
+
+  // Highlight the cell being measured, using the previous mesh as the layout reference.
+  const cells = [...document.querySelectorAll('.mesh-cell')];
+  if (known && cells.length === probing.total) {
+    cells.forEach((cell) => delete cell.dataset.probing);
+    const target = cells[Math.min(cells.length - 1, Math.max(0, probing.done - 1))];
+    if (target) target.dataset.probing = 'true';
+  }
+}
 
 function renderScrews(analysis) {
   const box = $('screwMap');
@@ -1036,6 +1092,265 @@ $('termForm').onsubmit = async (ev) => {
     toast(err.message);
   }
 };
+
+
+/* ---------- commissioning wizard ---------- */
+
+let plan = null;
+let lastProbeCap = null;
+const DONE_KEY = '3dtune.commissioning.done';
+
+function doneSet() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(DONE_KEY) ?? '[]'));
+  } catch {
+    return new Set();
+  }
+}
+
+function setDone(id, done) {
+  const set = doneSet();
+  if (done) set.add(id);
+  else set.delete(id);
+  localStorage.setItem(DONE_KEY, JSON.stringify([...set]));
+}
+
+const HAZARD_LABEL = { motion: 'двигает оси', heat: 'нагрев' };
+const WIZARD_TARGET = {
+  pid: ['cardPid', 'PID автотюн'],
+  esteps: ['cardESteps', 'калибровка E-steps'],
+  bed: ['cardProbe', 'зонд и сетка стола'],
+  probeOffset: ['cardProbe', 'живая подстройка Z'],
+  filament: ['filamentPresets', 'пресеты пластика'],
+};
+
+function block(kind, label, text) {
+  const div = document.createElement('div');
+  div.className = 'step-block';
+  div.dataset.kind = kind;
+  const b = document.createElement('b');
+  b.textContent = label;
+  const span = document.createElement('span');
+  span.textContent = text;
+  div.append(b, span);
+  return div;
+}
+
+function renderCommissioning() {
+  if (!plan) return;
+  const host = $('commissioningStages');
+  const done = doneSet();
+  const hideDone = $('commissioningHideDone').checked;
+  const hasProbe = state?.connection?.caps?.Z_PROBE !== false;
+  host.replaceChildren();
+
+  let total = 0;
+  let completed = 0;
+
+  for (const stage of plan.stages) {
+    const steps = plan.steps.filter((step) => step.stage === stage.stage && (hasProbe || !step.requiresProbe));
+    if (steps.length === 0) continue;
+    const doneHere = steps.filter((step) => done.has(step.id)).length;
+    total += steps.length;
+    completed += doneHere;
+
+    const box = document.createElement('section');
+    box.className = 'stage';
+
+    const head = document.createElement('div');
+    head.className = 'stage-head';
+    const title = document.createElement('div');
+    title.className = 'stage-title';
+    const name = document.createElement('span');
+    name.textContent = stage.title;
+    const count = document.createElement('span');
+    count.className = 'stage-count';
+    count.textContent = `${doneHere} / ${steps.length}`;
+    title.append(name, count);
+    const intro = document.createElement('div');
+    intro.className = 'stage-intro';
+    intro.textContent = stage.intro;
+    head.append(title, intro);
+    box.appendChild(head);
+
+    for (const step of steps) {
+      if (hideDone && done.has(step.id)) continue;
+      box.appendChild(renderStep(step, done.has(step.id)));
+    }
+    host.appendChild(box);
+  }
+
+  $('commissioningProgress').textContent = total > 0 ? `${completed} из ${total} шагов` : '';
+}
+
+function renderStep(step, isDone) {
+  const row = document.createElement('div');
+  row.className = 'step';
+  row.dataset.done = String(isDone);
+
+  const head = document.createElement('div');
+  head.className = 'step-head';
+  const check = document.createElement('input');
+  check.type = 'checkbox';
+  check.checked = isDone;
+  check.setAttribute('aria-label', `отметить выполненным: ${step.title}`);
+  check.onchange = () => {
+    setDone(step.id, check.checked);
+    renderCommissioning();
+  };
+  const title = document.createElement('div');
+  title.className = 'step-title';
+  title.textContent = step.title;
+  head.append(check, title);
+  if (step.hazard !== 'none') {
+    const hazard = document.createElement('span');
+    hazard.className = 'step-hazard';
+    hazard.dataset.hazard = step.hazard;
+    hazard.textContent = HAZARD_LABEL[step.hazard] ?? step.hazard;
+    head.appendChild(hazard);
+  }
+  row.appendChild(head);
+
+  const why = document.createElement('div');
+  why.className = 'step-why';
+  why.textContent = step.why;
+  row.append(why);
+
+  if (step.physical) row.appendChild(block('physical', 'сделать руками', step.physical));
+  if (step.observe) row.appendChild(block('observe', 'что должно произойти', step.observe));
+  if (step.pass) row.appendChild(block('pass', 'критерий прохождения', step.pass));
+  if (step.hostCannot) row.appendChild(block('cannot', 'хост этого не умеет', step.hostCannot));
+
+  if (step.gcode?.length) {
+    const codes = document.createElement('div');
+    codes.className = 'step-gcode';
+    for (const command of step.gcode) {
+      const span = document.createElement('span');
+      span.textContent = command;
+      codes.appendChild(span);
+    }
+    row.appendChild(codes);
+
+    const actions = document.createElement('div');
+    actions.className = 'row';
+    const run = document.createElement('button');
+    run.className = 'primary mini';
+    run.textContent = 'Выполнить';
+    const result = document.createElement('span');
+    result.className = 'step-result';
+    run.onclick = async () => {
+      if (step.needsConfirm) {
+        const warn =
+          step.hazard === 'heat'
+            ? 'Шаг включает нагрев.'
+            : 'Шаг двигает оси. Держи руку у выключателя питания.';
+        if (!confirm(`${step.title}\n\n${warn}\n\nКоманды: ${step.gcode.join(', ')}\n\nПродолжить?`)) return;
+      }
+      run.disabled = true;
+      result.textContent = 'выполняется…';
+      delete result.dataset.ok;
+      try {
+        const report = await rpc('runCommissioningStep', { stepId: step.id, confirmed: true });
+        const failed = report.commands.filter((c) => !c.ok);
+        result.dataset.ok = String(failed.length === 0);
+        result.textContent =
+          failed.length === 0
+            ? `выполнено: ${report.commands.map((c) => c.command).join(' · ')}`
+            : `${failed[0].command} — ${failed[0].detail}`;
+      } catch (err) {
+        result.dataset.ok = 'false';
+        result.textContent = err.message;
+        toast(err.message);
+      } finally {
+        run.disabled = false;
+      }
+    };
+    actions.append(run, result);
+    row.appendChild(actions);
+  } else if (step.useWizard) {
+    const target = WIZARD_TARGET[step.useWizard];
+    if (target) {
+      const actions = document.createElement('div');
+      actions.className = 'row';
+      const jump = document.createElement('button');
+      jump.className = 'ghost mini';
+      jump.textContent = `Открыть: ${target[1]}`;
+      jump.onclick = () => {
+        const el = document.getElementById(target[0]);
+        el?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        el?.animate?.([{ opacity: 0.45 }, { opacity: 1 }], { duration: 600 });
+      };
+      actions.appendChild(jump);
+      row.appendChild(actions);
+    }
+  }
+
+  return row;
+}
+
+$('commissioningReset').onclick = () => {
+  if (!confirm('Сбросить все отметки о выполненных шагах?')) return;
+  localStorage.removeItem(DONE_KEY);
+  renderCommissioning();
+};
+$('commissioningHideDone').onchange = renderCommissioning;
+
+/* ---------- filament presets ---------- */
+
+function renderPresets() {
+  if (!plan) return;
+  const host = $('filamentPresets');
+  host.replaceChildren();
+  for (const preset of plan.presets) {
+    const card = document.createElement('div');
+    card.className = 'preset';
+
+    const head = document.createElement('div');
+    head.className = 'preset-head';
+    const name = document.createElement('span');
+    name.className = 'preset-name';
+    name.textContent = preset.name;
+    const temps = document.createElement('span');
+    temps.className = 'preset-temps';
+    temps.textContent = `сопло ${preset.hotend}° · стол ${preset.bed}° · обдув ${preset.fan}%`;
+    head.append(name, temps);
+
+    const notes = document.createElement('div');
+    notes.className = 'preset-notes';
+    notes.textContent = preset.notes;
+
+    const slicer = document.createElement('div');
+    slicer.className = 'preset-slicer';
+    slicer.textContent = preset.slicer;
+
+    const actions = document.createElement('div');
+    actions.className = 'row';
+    const apply = document.createElement('button');
+    apply.className = 'primary mini';
+    apply.textContent = 'Выставить температуры';
+    apply.onclick = async () => {
+      const firstLayer = $('presetFirstLayer').checked;
+      const hotend = firstLayer ? preset.firstLayerHotend : preset.hotend;
+      const bed = firstLayer ? preset.firstLayerBed : preset.bed;
+      if (!confirm(`${preset.name}: сопло ${hotend} °C, стол ${bed} °C, обдув ${preset.fan} %.\n\nВключить нагрев?`)) return;
+      await call('applyFilamentPreset', { presetId: preset.id, firstLayer }, `${preset.name}: температуры выставлены`);
+    };
+    actions.appendChild(apply);
+
+    card.append(head, notes, slicer, actions);
+    host.appendChild(card);
+  }
+}
+
+async function loadPlan() {
+  try {
+    plan = await rpc('commissioningPlan');
+    renderCommissioning();
+    renderPresets();
+  } catch {
+    /* the wizard is optional chrome; a failure here must not break control */
+  }
+}
 
 function debounce(fn, ms) {
   let timer = null;

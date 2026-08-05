@@ -253,6 +253,18 @@
         <div><dt>Макс. кривизна</dt><dd id="meshWarp">—</dd></div>
         <div><dt>Центр − углы</dt><dd id="meshCenter">—</dd></div>
       </dl>
+      <div id="probingLive" class="probing" hidden>
+        <svg class="probe-pin" viewBox="0 0 40 64" role="img" aria-label="Анимация щупа зонда">
+          <rect class="probe-body" x="10" y="4" width="20" height="30" rx="3"/>
+          <line class="probe-needle" x1="20" y1="34" x2="20" y2="44"/>
+          <circle class="probe-tip" cx="20" cy="46" r="3"/>
+          <line class="probe-bed" x1="4" y1="58" x2="36" y2="58"/>
+        </svg>
+        <div class="probing-text">
+          <div id="probingLabel">прощупывание…</div>
+          <div class="probing-track"><i id="probingFill"></i></div>
+        </div>
+      </div>
       <div id="mesh" class="mesh"><span class="muted small">нет данных — выполни G29</span></div>
       <div id="meshScale" class="scale" hidden>
         <span id="meshMin">—</span>
@@ -267,7 +279,7 @@
     </div>
   </section>
 
-  <section class="card">
+  <section class="card" id="cardPid">
     <h2>PID автотюн</h2>
     <div class="row">
       <div class="seg" id="pidTarget" role="group" aria-label="Цель автотюна">
@@ -305,6 +317,34 @@
       </div>
     </div>
     <div id="settings" class="settings"><span class="muted small">нет данных</span></div>
+  </section>
+
+  <section class="card wide" id="cardCommissioning">
+    <h2>Настройка с нуля
+      <span id="commissioningProgress" class="small muted spacer"></span>
+    </h2>
+    <p class="note">
+      Порядок не произвольный: механика → датчики → нагрев → экструдер → стол → фиксация.
+      Калибровка на разболтанной механике или при вылезшем термисторе даёт уверенное число,
+      описывающее сломанную машину. Отметки сохраняются в этом браузере.
+    </p>
+    <div class="row">
+      <button id="commissioningReset" class="ghost mini">Сбросить отметки</button>
+      <label class="chk"><input id="commissioningHideDone" type="checkbox"> скрыть выполненные</label>
+    </div>
+    <div id="commissioningStages"></div>
+  </section>
+
+  <section class="card">
+    <h2>Пресеты пластика</h2>
+    <p class="note">
+      Кнопка выставляет температуры и обдув через те же проверки, что и ручной нагрев.
+      Откаты и скорости хост выставить не может — они живут в профиле слайсера и показаны текстом.
+    </p>
+    <div class="row">
+      <label class="chk"><input id="presetFirstLayer" type="checkbox"> температуры первого слоя</label>
+    </div>
+    <div id="filamentPresets" class="presets"></div>
   </section>
 
   <section class="card wide">

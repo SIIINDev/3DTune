@@ -15,6 +15,7 @@ import {
   type MachineLimitOverrides,
 } from './limits.ts';
 import { analyzeMesh, MeshCollector, type MeshAnalysis } from './mesh.ts';
+import { presetById, stepById, type CommissioningStep, type FilamentPreset } from './commissioning.ts';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -36,6 +37,9 @@ export type PrinterStateSnapshot = {
   endstops: Record<string, string>;
   settings: Record<string, Record<string, number>>;
   leveling: { on: boolean; mesh: number[][] | null; analysis: MeshAnalysis | null };
+  /* Live probing progress. total is null when the firmware reports no count — an indeterminate
+     state is honest, an invented percentage is not. */
+  probing: { active: boolean; done: number; total: number | null } | null;
   busy: string | null;
   halted: boolean;
   fan: number;
@@ -65,6 +69,8 @@ export type ConnectTarget =
       noBedPid?: boolean;
       sdPrintStatus?: 'idle' | 'printing' | 'unknown';
       corruptPrefixCount?: number;
+      /** Override reported M115 capabilities, e.g. a firmware built without a probe. */
+      caps?: Record<string, boolean>;
     };
 
 export type SdPrintStatus = 'idle' | 'printing' | 'unknown';
@@ -93,6 +99,18 @@ const INDEX_PARAM: Record<string, string> = {
 };
 
 const SAFE_TERMINAL_COMMAND = /^(M20|M27|M105|M114|M115|M119|M503)(?:[ \t]+[^\r\n]*)?$/i;
+
+/* Commissioning steps legitimately move axes and heat, so they cannot go through the terminal gate.
+   They are still checked against this allowlist rather than trusted outright: the catalogue is code,
+   and code gets edited. Notably absent is any E move — extrusion needs the cold-extrude guard, so it
+   goes through jog()/extrudeForESteps() instead. */
+const COMMISSIONING_COMMAND =
+  /^(?:M105|M119|M503|M107|M84|G90|G91|M106(?:[ \t]+S\d{1,3})?|M280[ \t]+P0[ \t]+S\d{1,3}|M10[49][ \t]+S\d{1,3}|M140[ \t]+S\d{1,3}|G28(?:[ \t]+[XYZ])*|G1(?:[ \t]+[XYZF]-?\d+(?:\.\d+)?)+)$/i;
+
+export type CommissioningRun = {
+  stepId: string;
+  commands: { command: string; ok: boolean; detail: string }[];
+};
 
 export type EStepsCalibration = {
   previous: number;
@@ -148,6 +166,7 @@ export class Printer extends EventEmitter {
   private levelingOn = false;
   private mesh: number[][] | null = null;
   private meshCollector = new MeshCollector();
+  private probing: { active: boolean; done: number; total: number | null } | null = null;
   private fan = 0;
   private eepromSaves = 0;
   private lastSaveAt = 0;
@@ -185,6 +204,7 @@ export class Printer extends EventEmitter {
       homed: { ...this.homed },
       endstops: { ...this.endstops },
       settings: structuredClone(this.settings),
+      probing: this.probing ? { ...this.probing } : null,
       leveling: {
         on: this.levelingOn,
         mesh: this.mesh,
@@ -250,6 +270,7 @@ export class Printer extends EventEmitter {
             noBedPid: target.noBedPid ?? false,
             sdPrintStatus: target.sdPrintStatus ?? 'idle',
             corruptPrefixCount: target.corruptPrefixCount ?? 0,
+            ...(target.caps ? { caps: target.caps } : {}),
           })
         : new SerialTransport(target.path, target.baud);
 
@@ -340,6 +361,7 @@ export class Printer extends EventEmitter {
 
   private wireLink(link: Link): void {
     link.on('line', (raw: string) => {
+      this.trackProbing(raw);
       this.pushLog('rx', raw);
       this.captureMesh(raw);
     });
@@ -438,6 +460,34 @@ export class Printer extends EventEmitter {
     const completed = this.meshCollector.push(raw);
     if (completed) {
       this.mesh = completed;
+      this.emitState();
+    }
+  }
+
+  /* Marlin announces grid progress as "Probing point N/M." — the trailing period is real. Some
+     builds and leveling systems announce nothing at all, which is why total stays nullable. */
+  private trackProbing(raw: string): void {
+    const line = raw.replace(/^echo\s*:\s?/i, '').trim();
+    const point = /Probing point\s+(\d+)\s*\/\s*(\d+)/i.exec(line);
+    if (point) {
+      this.probing = { active: true, done: Number(point[1]), total: Number(point[2]) };
+      this.emitState();
+      return;
+    }
+    if (/Probing point/i.test(line)) {
+      this.probing = { active: true, done: (this.probing?.done ?? 0) + 1, total: this.probing?.total ?? null };
+      this.emitState();
+    }
+  }
+
+  private beginProbing(): void {
+    this.probing = { active: true, done: 0, total: null };
+    this.emitState();
+  }
+
+  private endProbing(): void {
+    if (this.probing) {
+      this.probing = { ...this.probing, active: false };
       this.emitState();
     }
   }
@@ -649,7 +699,12 @@ export class Printer extends EventEmitter {
       throw new SafetyError('needs_confirm', 'G29 moves all axes and requires explicit confirmation');
     }
     if (!this.homed.x || !this.homed.y || !this.homed.z) await this.home('');
-    return this.requireLink().send('G29');
+    this.beginProbing();
+    try {
+      return await this.requireLink().send('G29');
+    } finally {
+      this.endProbing();
+    }
   }
 
   /* One guided pass: probe the bed, switch compensation on, persist it, and read it back.
@@ -687,7 +742,14 @@ export class Printer extends EventEmitter {
       steps.push({ name: 'G28', ok: false, detail: err instanceof Error ? err.message : String(err) });
       return { steps, saved: null, analysis: null, levelingOn: this.levelingOn };
     }
-    if (!record('G29', await this.requireLink().send('G29'))) {
+    this.beginProbing();
+    let probeResult: CommandResult;
+    try {
+      probeResult = await this.requireLink().send('G29');
+    } finally {
+      this.endProbing();
+    }
+    if (!record('G29', probeResult)) {
       return { steps, saved: null, analysis: null, levelingOn: this.levelingOn };
     }
     if (this.mesh === null) {
@@ -713,6 +775,64 @@ export class Printer extends EventEmitter {
     const snapshot = this.snapshot();
     this.sys(`bed auto-configuration finished: ${steps.filter((step) => step.ok).length}/${steps.length} шагов ok`);
     return { steps, saved, analysis: snapshot.leveling.analysis, levelingOn: this.levelingOn };
+  }
+
+  /* Runs a step from the server-side catalogue. The client sends an id, never G-code: a button that
+     accepted arbitrary commands would bypass every clamp in limits.ts. */
+  async runCommissioningStep(id: string, confirmed: boolean): Promise<CommissioningRun> {
+    const step: CommissioningStep | undefined = stepById(id);
+    if (!step) throw new SafetyError('unknown_step', `неизвестный шаг настройки: ${id}`);
+    if (!step.gcode || step.gcode.length === 0) {
+      throw new SafetyError('no_commands', `шаг «${step.title}» выполняется руками, команд для него нет`);
+    }
+    if (step.needsConfirm && !confirmed) {
+      throw new SafetyError(
+        'needs_confirm',
+        step.hazard === 'heat'
+          ? `шаг «${step.title}» включает нагрев — нужно явное подтверждение`
+          : `шаг «${step.title}» двигает оси — нужно явное подтверждение`,
+      );
+    }
+    if (step.requiresProbe && this.caps['Z_PROBE'] === false) {
+      throw new SafetyError('no_probe', 'прошивка не сообщает о поддержке зонда — шаг недоступен');
+    }
+
+    const link = this.requireLink();
+    const run: CommissioningRun = { stepId: id, commands: [] };
+
+    for (const raw of step.gcode) {
+      const command = raw.trim();
+      if (!COMMISSIONING_COMMAND.test(command)) {
+        throw new SafetyError('unsafe_step_command', `команда шага не прошла проверку: ${command}`);
+      }
+      // Clamp the catalogue's own temperatures too, so an edit here cannot outrun the safety layer.
+      const hotend = /^M10[49][ \t]+S(\d{1,3})$/i.exec(command);
+      if (hotend) checkHotendTarget(Number(hotend[1]), this.limits, true);
+      const bed = /^M140[ \t]+S(\d{1,3})$/i.exec(command);
+      if (bed) checkBedTarget(Number(bed[1]), this.limits);
+
+      const result = await link.send(command);
+      run.commands.push({ command, ok: result.ok, detail: result.error ?? 'ok' });
+      if (!result.ok) break;
+    }
+
+    this.sys(`commissioning step ${id}: ${run.commands.filter((c) => c.ok).length}/${run.commands.length} команд ok`);
+    if (step.gcode.some((c) => /^M10[49]|^M140/i.test(c.trim()))) await this.refreshSettings().catch(() => undefined);
+    this.emitState();
+    return run;
+  }
+
+  async applyFilamentPreset(id: string, firstLayer: boolean): Promise<FilamentPreset> {
+    const preset = presetById(id);
+    if (!preset) throw new SafetyError('unknown_preset', `неизвестный пресет пластика: ${id}`);
+    const hotend = firstLayer ? preset.firstLayerHotend : preset.hotend;
+    const bed = firstLayer ? preset.firstLayerBed : preset.bed;
+    // Deliberately routed through the clamped setters rather than raw M104/M140.
+    await this.setHotendTarget(hotend, true);
+    await this.setBedTarget(bed);
+    await this.setFan(Math.round((Math.min(100, Math.max(0, preset.fan)) / 100) * 255));
+    this.sys(`filament preset ${preset.name}: сопло ${hotend}C, стол ${bed}C, обдув ${preset.fan}%`);
+    return preset;
   }
 
   async setLeveling(on: boolean): Promise<CommandResult> {

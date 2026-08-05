@@ -6,6 +6,7 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import type { Printer } from '../printer/printer.ts';
 import { SafetyError } from '../printer/limits.ts';
 import { listPorts } from '../transport/serial.ts';
+import { COMMISSIONING_STAGES, COMMISSIONING_STEPS, FILAMENT_PRESETS } from '../printer/commissioning.ts';
 
 export type ServerOptions = {
   printer: Printer;
@@ -195,6 +196,23 @@ export function startServer(opts: ServerOptions): ServerHandle {
     switch (method) {
       case 'listPorts':
         return listPorts();
+
+      case 'commissioningPlan':
+        return { stages: COMMISSIONING_STAGES, steps: COMMISSIONING_STEPS, presets: FILAMENT_PRESETS };
+
+      case 'runCommissioningStep': {
+        const stepId = String(p['stepId'] ?? '');
+        audit(stepId);
+        spendHeatToken(client);
+        return printer.runCommissioningStep(stepId, Boolean(p['confirmed']));
+      }
+
+      case 'applyFilamentPreset': {
+        const presetId = String(p['presetId'] ?? '');
+        audit(`${presetId}${p['firstLayer'] ? ' (первый слой)' : ''}`);
+        spendHeatToken(client);
+        return printer.applyFilamentPreset(presetId, Boolean(p['firstLayer']));
+      }
 
       case 'connect': {
         audit();
