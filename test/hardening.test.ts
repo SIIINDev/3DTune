@@ -306,3 +306,130 @@ test('groups of bare-number buttons carry a group label that gives them meaning'
   }
   assert.deepEqual(offenders, [], 'a row of bare numbers needs role=group with an aria-label');
 });
+
+/* P11: until now the parser was only ever checked against our own simulator, whose output was
+   written by the same hand — agreement proved nothing. These lines follow Marlin's real report_*
+   implementations (Marlin/src/gcode/config/*.cpp, module/settings.cpp), including the forms our
+   own KP5L build does not produce: a hotend index on M301 under PID_PARAMS_PER_HOTEND, a tool
+   index on M92 under DISTINCT_E_FACTORS, extra axes, and the C/L/F extras. */
+const REAL_MARLIN_M503 = [
+  'echo:; Steps per unit:',
+  'echo:  M92 X80.00 Y80.00 Z400.00 I200.00 J200.00 E93.00',
+  'echo:; Maximum feedrates (units/s):',
+  'echo:  M203 X300.00 Y300.00 Z5.00 E25.00',
+  'echo:; Maximum Acceleration (units/s2):',
+  'echo:  M201 X3000.00 Y3000.00 Z100.00 E10000.00',
+  'echo:; Acceleration (units/s2): P<print> R<retract> T<travel>',
+  'echo:  M204 P500.00 R1000.00 T1000.00',
+  'echo:; Advanced: B<min_segment_time_us> S<min_feedrate> T<min_travel_feedrate> J<junc_dev>',
+  'echo:  M205 B20000.00 S0.00 T0.00 J0.08',
+  'echo:; Home offset:',
+  'echo:  M206 X0.00 Y0.00 Z0.00',
+  'echo:; Auto Bed Leveling:',
+  'echo:  M420 S1 Z10.00',
+  'echo:; Hotend PID:',
+  'echo:  M301 E0 P22.20 I1.08 D114.00 C1.00 L20',
+  'echo:; Bed PID:',
+  'echo:  M304 P375.30 I65.20 D540.00',
+  'echo:; Z-Probe Offset (mm):',
+  'echo:  M851 X10.00 Y10.00 Z-2.75',
+  'echo:; Linear Advance:',
+  'echo:  M900 K0.22',
+];
+
+class ScriptedMarlin extends EventEmitter implements Transport {
+  readonly label = 'test://scripted-marlin';
+  private extraM301: string[];
+
+  constructor(extraM301: string[] = []) {
+    super();
+    this.extraM301 = extraM301;
+  }
+
+  open(): Promise<void> {
+    setTimeout(() => this.emit('data', 'start\n'), 5);
+    return Promise.resolve();
+  }
+
+  close(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  write(data: string): void {
+    const body = data.trim().replace(/^N\d+\s+/, '').replace(/\*\d+$/, '').trim().toUpperCase();
+    const out = (lines: string[]) => setTimeout(() => this.emit('data', `${[...lines, 'ok'].join('\n')}\n`), 1);
+
+    if (body.startsWith('M115')) {
+      out([
+        'FIRMWARE_NAME:Marlin bugfix-2.1.x (GitHub) SOURCE_CODE_URL:github.com/MarlinFirmware/Marlin ' +
+          'PROTOCOL_VERSION:1.0 MACHINE_TYPE:Kingroon KP5L EXTRUDER_COUNT:1 UUID:cede2a2f',
+        'Cap:EEPROM:1',
+        'Cap:AUTOREPORT_TEMP:1',
+        'Cap:EMERGENCY_PARSER:1',
+        'Cap:Z_PROBE:1',
+      ]);
+      return;
+    }
+    if (body.startsWith('M503')) {
+      const lines = [...REAL_MARLIN_M503];
+      if (this.extraM301.length > 0) lines.splice(16, 0, ...this.extraM301);
+      out(lines);
+      return;
+    }
+    if (body.startsWith('M119')) {
+      out(['Reporting endstop status', 'x_min: open', 'y_min: open', 'z_min: open']);
+      return;
+    }
+    if (body.startsWith('M114')) {
+      out(['X:0.00 Y:0.00 Z:0.00 E:0.00 Count X:0 Y:0 Z:0']);
+      return;
+    }
+    out([]);
+  }
+}
+
+test('real Marlin M503 output is parsed, including index-prefixed report lines', async () => {
+  const printer = new Printer();
+  const transport = new ScriptedMarlin();
+  await printer.connect({ kind: 'injected', transport });
+  try {
+    const { settings } = printer.snapshot();
+
+    assert.deepEqual(
+      settings['M92'],
+      { X: 80, Y: 80, Z: 400, I: 200, J: 200, E: 93 },
+      'extra axes must be kept, not truncated or shifted',
+    );
+    assert.deepEqual(settings['M203'], { X: 300, Y: 300, Z: 5, E: 25 });
+    assert.deepEqual(settings['M204'], { P: 500, R: 1000, T: 1000 });
+    assert.equal(settings['M205']?.['J'], 0.08, 'junction deviation replaces per-axis jerk');
+    assert.deepEqual(settings['M851'], { X: 10, Y: 10, Z: -2.75 }, 'a negative probe offset must survive');
+    assert.deepEqual(settings['M304'], { P: 375.3, I: 65.2, D: 540 });
+    assert.equal(settings['M900']?.['K'], 0.22);
+
+    // The E on "M301 E0 P.. I.. D.." is a hotend index. Treating it as a field would render a bogus
+    // editable input and an edit would send M301 E<value>, changing the wrong thing.
+    assert.equal(settings['M301']?.['P'], 22.2);
+    assert.equal(settings['M301']?.['I'], 1.08);
+    assert.equal(settings['M301']?.['D'], 114);
+    assert.equal(settings['M301']?.['E'], undefined, 'the hotend index must not become a PID field');
+    assert.equal(settings['M301']?.['C'], 1, 'PID_EXTRUSION_SCALING extras are still reported');
+
+    assert.equal(printer.snapshot().leveling.on, true, 'M420 S1 must be read as leveling enabled');
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+test('a second hotend PID line does not overwrite the first', async () => {
+  const printer = new Printer();
+  const transport = new ScriptedMarlin(['echo:  M301 E1 P99.00 I9.00 D9.00']);
+  await printer.connect({ kind: 'injected', transport });
+  try {
+    const m301 = printer.snapshot().settings['M301'];
+    assert.equal(m301?.['P'], 22.2, 'hotend 0 must win; E1 belongs to a second hotend we do not edit');
+    assert.notEqual(m301?.['P'], 99);
+  } finally {
+    await printer.disconnect();
+  }
+});

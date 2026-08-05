@@ -55,6 +55,9 @@ export type SaveVerification = CommandResult & {
 
 export type ConnectTarget =
   | { kind: 'serial'; path: string; baud: number }
+  /* Transport is already an interface; injecting one lets the protocol layer be exercised against
+     verbatim firmware output instead of only against our own simulator. */
+  | { kind: 'injected'; transport: Transport; label?: string }
   | {
       kind: 'mock';
       chaos?: boolean;
@@ -77,6 +80,17 @@ const STATE_THROTTLE_MS = 120;
 const HANDSHAKE_ATTEMPTS = 3;
 const SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M420', 'M851', 'M900']);
 const EDITABLE_SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M851', 'M900']);
+/* Which leading letter carries a tool/hotend index on each M503 report line, per Marlin's own
+   report_* implementations (M301 En under PID_PARAMS_PER_HOTEND, M92/M201/M203/M205 Tn under
+   DISTINCT_E_FACTORS). Everything else has no index form. */
+const INDEX_PARAM: Record<string, string> = {
+  M301: 'E',
+  M92: 'T',
+  M201: 'T',
+  M203: 'T',
+  M205: 'T',
+};
+
 const SAFE_TERMINAL_COMMAND = /^(M20|M27|M105|M114|M115|M119|M503)(?:[ \t]+[^\r\n]*)?$/i;
 
 export type EStepsCalibration = {
@@ -227,7 +241,9 @@ export class Printer extends EventEmitter {
     this.emitState();
 
     const transport: Transport =
-      target.kind === 'mock'
+      target.kind === 'injected'
+        ? target.transport
+        : target.kind === 'mock'
         ? new MockTransport({
             chaos: target.chaos ?? false,
             noBedPid: target.noBedPid ?? false,
@@ -237,7 +253,7 @@ export class Printer extends EventEmitter {
         : new SerialTransport(target.path, target.baud);
 
     this.transport = transport;
-    this.label = transport.label;
+    this.label = (target.kind === 'injected' ? target.label : undefined) ?? transport.label;
 
     try {
       await transport.open();
@@ -576,14 +592,29 @@ export class Printer extends EventEmitter {
     for (const raw of res.lines) {
       const line = raw.replace(/^echo\s*:\s?/i, '').trim();
       const m = /^(M\d+)\s+(.*)$/.exec(line);
-      if (!m || !SETTING_CODES.has(m[1] ?? '')) continue;
+      const code = m?.[1] ?? '';
+      if (!m || !SETTING_CODES.has(code)) continue;
+
+      let body = (m[2] ?? '').toUpperCase();
+
+      /* Marlin prefixes some report lines with a tool/hotend INDEX, not a value:
+           M301 E0 P22.20 I1.08 D114.00   (PID_PARAMS_PER_HOTEND)
+           M92  T0 E93.00                 (DISTINCT_E_FACTORS)
+         Treated as a field it becomes a bogus editable input whose edit would send
+         "M301 E<value>" and change the wrong thing. Keep the first index only. */
+      const indexed = new RegExp(`^${INDEX_PARAM[code] ?? '(?!)'}(\\d+)\\s+`).exec(body);
+      if (indexed) {
+        if (Number(indexed[1]) !== 0) continue;
+        body = body.slice(indexed[0].length);
+      }
+
       const params: Record<string, number> = {};
       const re = /([A-Z])(-?\d*\.?\d+)/g;
       let p: RegExpExecArray | null;
-      while ((p = re.exec((m[2] ?? '').toUpperCase())) !== null) {
+      while ((p = re.exec(body)) !== null) {
         if (p[1]) params[p[1]] = Number(p[2]);
       }
-      if (Object.keys(params).length > 0) parsed[m[1] as string] = params;
+      if (Object.keys(params).length > 0) parsed[code] = params;
     }
     if (Object.keys(parsed).length > 0) this.settings = parsed;
     const m420 = parsed['M420'];
