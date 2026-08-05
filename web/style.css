@@ -1251,3 +1251,76 @@ canvas {
     animation: none;
   }
 }
+
+/* ---------- pairing ---------- */
+
+.pair-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: var(--plane);
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.pair-card {
+  background: var(--surface);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  padding: 22px;
+  max-width: 420px;
+  display: grid;
+  gap: 12px;
+}
+.pair-card h1 {
+  margin: 0;
+  font-size: 20px;
+}
+.pair-card p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+.pair-card form {
+  display: flex;
+  gap: 8px;
+}
+#pairCode {
+  flex: 1;
+  font-size: 26px;
+  letter-spacing: 6px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  min-height: 52px;
+}
+.pair-error {
+  color: var(--st-crit) !important;
+  font-size: 13px;
+}
+
+.pair-code {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: 5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--s-bed);
+}
+.pair-urls {
+  display: grid;
+  gap: 5px;
+  font-size: 12.5px;
+}
+.pair-url {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--mono);
+}
+.pair-url[data-likely="false"] {
+  color: var(--muted);
+}
+.pair-url button {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 11px;
+}

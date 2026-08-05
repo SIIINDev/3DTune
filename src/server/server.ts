@@ -1,7 +1,8 @@
-import { timingSafeEqual } from 'node:crypto';
+import { randomInt, timingSafeEqual } from 'node:crypto';
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { extname, join, normalize } from 'node:path';
+import { networkInterfaces } from 'node:os';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { Printer } from '../printer/printer.ts';
 import { SafetyError } from '../printer/limits.ts';
@@ -46,6 +47,16 @@ const HEAT_BUCKET_MAX = 8;
    Override with deadmanMinutes in ~/.3dtune/config.json; 0 disables the timer entirely. */
 export const DEADMAN_DEFAULT_MS = 30 * 60_000;
 
+/* Pairing a second device by typing a 22-character token is hostile. A short numeric code is
+   usable, and safe on a LAN only because it is single-use, short-lived, and dies after a handful of
+   wrong guesses — six digits alone would be brute-forceable in seconds without those. */
+const PAIRING_TTL_MS = 5 * 60_000;
+const PAIRING_MAX_ATTEMPTS = 5;
+const PAIR_IP_WINDOW_MS = 60_000;
+const PAIR_IP_MAX = 10;
+
+type Pairing = { code: string; expiresAt: number; attemptsLeft: number };
+
 function assetVersion(webRoot: string): string {
   let newest = 0;
   for (const entry of readdirSync(webRoot, { withFileTypes: true })) {
@@ -64,7 +75,48 @@ export function startServer(opts: ServerOptions): ServerHandle {
   let deadmanTimer: NodeJS.Timeout | undefined;
   const deadmanMs = opts.deadmanMs ?? DEADMAN_DEFAULT_MS;
 
-  const http = createServer((req, res) => handleHttp(req, res, webRoot, opts.mock, opts.chaos));
+  let pairing: Pairing | null = null;
+  const pairAttempts = new Map<string, { count: number; resetAt: number }>();
+
+  function createPairing(): { code: string; expiresInSec: number } {
+    const code = String(randomInt(100_000, 1_000_000));
+    pairing = { code, expiresAt: Date.now() + PAIRING_TTL_MS, attemptsLeft: PAIRING_MAX_ATTEMPTS };
+    return { code, expiresInSec: Math.round(PAIRING_TTL_MS / 1000) };
+  }
+
+  function pairingOpen(): boolean {
+    if (pairing && pairing.expiresAt <= Date.now()) pairing = null;
+    return pairing !== null;
+  }
+
+  function redeemPairing(ip: string, candidate: string): { ok: true; token: string } | { ok: false; reason: string } {
+    const now = Date.now();
+    const seen = pairAttempts.get(ip);
+    if (seen && seen.resetAt > now) {
+      if (seen.count >= PAIR_IP_MAX) return { ok: false, reason: 'слишком много попыток, подожди минуту' };
+      seen.count++;
+    } else {
+      pairAttempts.set(ip, { count: 1, resetAt: now + PAIR_IP_WINDOW_MS });
+    }
+
+    if (!pairingOpen() || !pairing) return { ok: false, reason: 'код не запрошен или уже истёк — покажи новый на компьютере с принтером' };
+    const a = Buffer.from(candidate);
+    const b = Buffer.from(pairing.code);
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      pairing.attemptsLeft--;
+      if (pairing.attemptsLeft <= 0) {
+        pairing = null;
+        return { ok: false, reason: 'неверный код. Код отменён — запроси новый' };
+      }
+      return { ok: false, reason: `неверный код, осталось попыток: ${pairing.attemptsLeft}` };
+    }
+    pairing = null;
+    return { ok: true, token };
+  }
+
+  const http = createServer((req, res) =>
+    handleHttp(req, res, webRoot, opts.mock, opts.chaos, { pairingOpen, redeemPairing }),
+  );
   const wss = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 });
 
   const heatRefill = setInterval(() => {
@@ -196,6 +248,12 @@ export function startServer(opts: ServerOptions): ServerHandle {
     switch (method) {
       case 'listPorts':
         return listPorts();
+
+      case 'createPairingCode': {
+        audit();
+        const created = createPairing();
+        return { ...created, urls: lanUrls(opts.port) };
+      }
 
       case 'commissioningPlan':
         return { stages: COMMISSIONING_STAGES, steps: COMMISSIONING_STEPS, presets: FILAMENT_PRESETS };
@@ -443,6 +501,20 @@ export function startServer(opts: ServerOptions): ServerHandle {
   };
 }
 
+/* Addresses the other device can actually reach. Virtual adapters get flagged rather than hidden:
+   guessing wrong and silently dropping the real one is worse than showing both. */
+export function lanUrls(port: number): { url: string; address: string; likely: boolean }[] {
+  const out: { url: string; address: string; likely: boolean }[] = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const iface of list ?? []) {
+      if (iface.family !== 'IPv4' || iface.internal) continue;
+      const likely = /^(?:192\.168\.|10\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(iface.address);
+      out.push({ address: iface.address, url: `http://${iface.address}:${port}/`, likely });
+    }
+  }
+  return out.sort((a, b) => Number(b.likely) - Number(a.likely));
+}
+
 function tokenOk(provided: string | null, expected: string): boolean {
   if (!provided) return false;
   const a = Buffer.from(provided);
@@ -454,18 +526,68 @@ function send(ws: WebSocket, payload: unknown): void {
   if (ws.readyState === 1) ws.send(JSON.stringify(payload));
 }
 
+type PairingHooks = {
+  pairingOpen: () => boolean;
+  redeemPairing: (ip: string, code: string) => { ok: true; token: string } | { ok: false; reason: string };
+};
+
 function handleHttp(
   req: IncomingMessage,
   res: ServerResponse,
   webRoot: string,
   mock: boolean,
   chaos: boolean,
+  pair: PairingHooks,
 ): void {
   const url = new URL(req.url ?? '/', 'http://localhost');
+  const json = (status: number, body: unknown) => {
+    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(body));
+  };
+
+  /* Redeeming a pairing code is the one unauthenticated write. It hands out the token, so it is
+     single-use, expiring and attempt-limited server-side — see createPairing/redeemPairing. */
+  if (url.pathname === '/api/pair' && req.method === 'POST') {
+    let body = '';
+    let tooBig = false;
+    req.on('data', (chunk) => {
+      body += chunk;
+      if (body.length > 512) {
+        tooBig = true;
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      if (tooBig) return;
+      let code = '';
+      try {
+        const parsed = JSON.parse(body || '{}') as Record<string, unknown>;
+        code = typeof parsed['code'] === 'string' ? parsed['code'].trim() : '';
+      } catch {
+        json(400, { ok: false, error: 'некорректный запрос' });
+        return;
+      }
+      if (!/^\d{6}$/.test(code)) {
+        json(400, { ok: false, error: 'код — ровно 6 цифр' });
+        return;
+      }
+      const ip = (req.socket.remoteAddress ?? '?').replace('::ffff:', '');
+      const result = pair.redeemPairing(ip, code);
+      if (result.ok) json(200, { ok: true, token: result.token });
+      else json(403, { ok: false, error: result.reason });
+    });
+    return;
+  }
 
   if (url.pathname === '/api/info') {
-    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ name: '3DTune', version: '0.1.0', mock, chaos, needsToken: true }));
+    json(200, {
+      name: '3DTune',
+      version: '0.1.0',
+      mock,
+      chaos,
+      needsToken: true,
+      pairingOpen: pair.pairingOpen(),
+    });
     return;
   }
 

@@ -267,3 +267,83 @@ test('dead-man timer cools a confirmed-idle printer after the last client leaves
     await guardedServer.close();
   }
 });
+
+/* Pairing hands out the access token to an unauthenticated caller, so its limits are the security
+   boundary: six digits alone would fall to a script in seconds. */
+async function pair(port: number, code: string) {
+  const res = await fetch(`http://127.0.0.1:${port}/api/pair`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  return { status: res.status, body: (await res.json()) as Record<string, unknown> };
+}
+
+test('a pairing code is six digits and reported as open without being leaked', async () => {
+  const client = await connect();
+  await client.hello;
+  const created = (await client.rpc('createPairingCode')) as { code: string; expiresInSec: number; urls: unknown[] };
+  assert.match(created.code, /^\d{6}$/);
+  assert.ok(created.expiresInSec > 0 && created.expiresInSec <= 600);
+  assert.ok(Array.isArray(created.urls));
+
+  const info = (await (await fetch(`http://127.0.0.1:${port}/api/info`)).json()) as Record<string, unknown>;
+  assert.equal(info['pairingOpen'], true, 'the UI needs to know a code is live');
+  assert.doesNotMatch(JSON.stringify(info), new RegExp(created.code), 'the code itself must never be served');
+  client.close();
+});
+
+test('a correct code yields the token exactly once', async () => {
+  const client = await connect();
+  await client.hello;
+  const { code } = (await client.rpc('createPairingCode')) as { code: string };
+
+  const first = await pair(port, code);
+  assert.equal(first.status, 200);
+  assert.equal(first.body['token'], TOKEN, 'pairing must hand over the real access token');
+
+  const second = await pair(port, code);
+  assert.equal(second.status, 403, 'a used code must not work twice');
+  client.close();
+});
+
+test('malformed codes are rejected before any attempt is spent', async () => {
+  const client = await connect();
+  await client.hello;
+  await client.rpc('createPairingCode');
+  for (const bad of ['12345', '1234567', 'abcdef', '', '12 34 56']) {
+    const res = await pair(port, bad);
+    assert.equal(res.status, 400, `"${bad}" must be rejected as malformed`);
+  }
+  // The real code still works, proving the malformed ones did not burn attempts.
+  const { code } = (await client.rpc('createPairingCode')) as { code: string };
+  assert.equal((await pair(port, code)).status, 200);
+  client.close();
+});
+
+test('wrong codes burn attempts and then cancel the code entirely', async () => {
+  const client = await connect();
+  await client.hello;
+  const { code } = (await client.rpc('createPairingCode')) as { code: string };
+  const wrong = String((Number(code) + 1) % 1_000_000).padStart(6, '0');
+
+  const reasons: string[] = [];
+  for (let i = 0; i < 5; i++) {
+    const res = await pair(port, wrong);
+    assert.equal(res.status, 403);
+    reasons.push(String(res.body['error']));
+  }
+  assert.ok(
+    reasons.some((r) => /отменён/.test(r)),
+    `the code must be cancelled after repeated failures, saw: ${reasons.join(' | ')}`,
+  );
+  // Even the right code is dead now — the window closed rather than staying open to guessing.
+  assert.equal((await pair(port, code)).status, 403);
+  client.close();
+});
+
+test('pairing is refused when no code has been issued', async () => {
+  const res = await pair(port, '000000');
+  assert.equal(res.status, 403);
+  assert.match(String(res.body['error']), /код не запрошен|неверный код|слишком много/);
+});

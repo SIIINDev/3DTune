@@ -5,6 +5,7 @@ import { CONFIG_PATH, deadmanMs, loadConfig, rotateToken, saveConfig } from './c
 import { Printer } from './printer/printer.ts';
 import { startServer } from './server/server.ts';
 import { listPorts } from './transport/serial.ts';
+import { formatDoctor, runDoctor } from './doctor.ts';
 
 type Args = {
   mock: boolean;
@@ -17,6 +18,8 @@ type Args = {
   listPorts: boolean;
   help: boolean;
   rotateToken: boolean;
+  doctor: boolean;
+  open: boolean;
 };
 
 function parseArgs(argv: string[]): Args {
@@ -30,6 +33,8 @@ function parseArgs(argv: string[]): Args {
     listPorts: false,
     help: false,
     rotateToken: false,
+    doctor: false,
+    open: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -65,6 +70,12 @@ function parseArgs(argv: string[]): Args {
       case '--rotate-token':
         args.rotateToken = true;
         break;
+      case '--doctor':
+        args.doctor = true;
+        break;
+      case '--open':
+        args.open = true;
+        break;
     }
   }
   return args;
@@ -82,6 +93,8 @@ function usage(): void {
   --host <addr>       bind address (default 127.0.0.1; use 0.0.0.0 to expose on the LAN)
   --port <n>          http port (default 8420, persisted in config)
   --list-ports        print detected serial ports and exit
+  --doctor            check everything a first run needs, then exit
+  --open              open the browser at the local URL once the server is up
   --rotate-token      generate a new access token and invalidate existing browser sessions
   --help              this text
 `);
@@ -102,6 +115,20 @@ async function main(): Promise<void> {
 
   if (args.help) {
     usage();
+    return;
+  }
+
+  if (args.doctor) {
+    const configured = (() => {
+      try {
+        return loadConfig().port;
+      } catch {
+        return 8420;
+      }
+    })();
+    const checks = await runDoctor(args.port > 0 ? args.port : configured);
+    process.stdout.write(formatDoctor(checks));
+    process.exitCode = checks.some((c) => c.status === 'fail') ? 1 : 0;
     return;
   }
 
@@ -176,6 +203,17 @@ async function main(): Promise<void> {
       : '  idle policy: dead-man timer disabled by config — heaters are never turned off automatically\n',
   );
   process.stdout.write(`  token stored in ${CONFIG_PATH}\n\n`);
+
+  if (args.open) {
+    const opener =
+      process.platform === 'win32' ? ['cmd', ['/c', 'start', '', localUrl]] : process.platform === 'darwin' ? ['open', [localUrl]] : ['xdg-open', [localUrl]];
+    try {
+      const { spawn } = await import('node:child_process');
+      spawn(opener[0] as string, opener[1] as string[], { detached: true, stdio: 'ignore' }).unref();
+    } catch {
+      process.stdout.write('  (не удалось открыть браузер автоматически — открой ссылку выше вручную)\n');
+    }
+  }
 
   if (args.autoconnect) {
     try {

@@ -22,6 +22,20 @@
   </div>
 </header>
 
+<div id="pairGate" class="pair-gate" hidden>
+  <div class="pair-card">
+    <h1>3DTune</h1>
+    <p>Этот браузер ещё не подключён. Введи 6-значный код — его показывает 3DTune на компьютере,
+      к которому подключён принтер: карточка «Подключить устройство» → «Показать код».</p>
+    <form id="pairForm">
+      <input id="pairCode" inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}"
+             maxlength="6" placeholder="000000" aria-label="Код подключения">
+      <button class="primary" type="submit">Подключить</button>
+    </form>
+    <p id="pairError" class="pair-error" hidden></p>
+  </div>
+</div>
+
 <div id="banners" class="banners"></div>
 
 <div class="filters">
@@ -84,6 +98,20 @@
         <button data-t="80">80</button><button data-t="100">100</button>
       </span>
     </div>
+  </section>
+
+  <section class="card" id="cardPairing">
+    <h2>Подключить устройство</h2>
+    <p class="note">
+      Чтобы управлять с телефона, мака или другого ПК — открой на нём адрес из списка и введи код.
+      Код действует 5 минут, срабатывает один раз и гаснет после нескольких неверных попыток.
+    </p>
+    <div class="row">
+      <button id="pairCreate" class="primary">Показать код</button>
+      <span id="pairCodeShown" class="pair-code" hidden></span>
+      <span id="pairCodeTtl" class="small muted"></span>
+    </div>
+    <div id="pairUrls" class="pair-urls"></div>
   </section>
 
   <section class="card">

@@ -30,10 +30,14 @@ const SETTING_META = {
 
 const PROBE_FIELDS = ['X', 'Y', 'Z'];
 
-const token = new URLSearchParams(location.hash.slice(1)).get('t') ?? localStorage.getItem('3dtune.token') ?? '';
-if (new URLSearchParams(location.hash.slice(1)).get('t')) {
-  localStorage.setItem('3dtune.token', token);
-  history.replaceState(null, '', location.pathname);
+function readToken() {
+  const fromHash = new URLSearchParams(location.hash.slice(1)).get('t');
+  if (fromHash) {
+    localStorage.setItem('3dtune.token', fromHash);
+    history.replaceState(null, '', location.pathname);
+    return fromHash;
+  }
+  return localStorage.getItem('3dtune.token') ?? '';
 }
 
 const chart = createChart($('chart'), $('tooltip'));
@@ -82,9 +86,11 @@ function deviceLabel() {
   return label;
 }
 
+let token = readToken();
+
 function connectWs() {
   if (!token) {
-    toast('Нет токена. Открой ссылку с #t=… из консоли сервера.');
+    showPairGate();
     return;
   }
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -1349,6 +1355,112 @@ async function loadPlan() {
     renderPresets();
   } catch {
     /* the wizard is optional chrome; a failure here must not break control */
+  }
+}
+
+
+/* ---------- pairing ---------- */
+
+function showPairGate() {
+  $('pairGate').hidden = false;
+  $('pairCode').focus();
+}
+
+$('pairForm').onsubmit = async (event) => {
+  event.preventDefault();
+  const code = $('pairCode').value.trim();
+  const error = $('pairError');
+  error.hidden = true;
+  if (!/^\d{6}$/.test(code)) {
+    error.textContent = 'Код — ровно 6 цифр.';
+    error.hidden = false;
+    return;
+  }
+  try {
+    const res = await fetch('/api/pair', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ code }),
+    });
+    const body = await res.json();
+    if (!res.ok || !body.ok) {
+      error.textContent = body.error ?? 'Код не принят.';
+      error.hidden = false;
+      $('pairCode').select();
+      return;
+    }
+    localStorage.setItem('3dtune.token', body.token);
+    token = body.token;
+    $('pairGate').hidden = true;
+    connectWs();
+    void loadPlan();
+  } catch (err) {
+    error.textContent = String(err.message ?? err);
+    error.hidden = false;
+  }
+};
+
+$('pairCreate').onclick = async () => {
+  try {
+    const result = await rpc('createPairingCode');
+    const shown = $('pairCodeShown');
+    shown.hidden = false;
+    shown.textContent = result.code;
+    let left = result.expiresInSec;
+    $('pairCodeTtl').textContent = `действует ${left} с`;
+    clearInterval($('pairCreate').ttlTimer);
+    $('pairCreate').ttlTimer = setInterval(() => {
+      left -= 1;
+      if (left <= 0) {
+        clearInterval($('pairCreate').ttlTimer);
+        shown.hidden = true;
+        $('pairCodeTtl').textContent = 'код истёк — покажи новый';
+        return;
+      }
+      $('pairCodeTtl').textContent = `действует ${left} с`;
+    }, 1000);
+    renderPairUrls(result.urls);
+  } catch (err) {
+    toast(err.message);
+  }
+};
+
+function renderPairUrls(urls) {
+  const box = $('pairUrls');
+  box.replaceChildren();
+  if (!urls?.length) {
+    const span = document.createElement('span');
+    span.className = 'muted small';
+    span.textContent = 'сервер запущен только на loopback — перезапусти с --host 0.0.0.0';
+    box.appendChild(span);
+    return;
+  }
+  for (const entry of urls) {
+    const row = document.createElement('div');
+    row.className = 'pair-url';
+    row.dataset.likely = String(entry.likely);
+    const link = document.createElement('span');
+    link.textContent = entry.url;
+    const copy = document.createElement('button');
+    copy.className = 'ghost';
+    copy.textContent = 'копировать';
+    copy.onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(entry.url);
+        copy.textContent = 'скопировано';
+        setTimeout(() => (copy.textContent = 'копировать'), 1500);
+      } catch {
+        copy.textContent = 'скопируй вручную';
+      }
+    };
+    row.append(link, copy);
+    if (!entry.likely) {
+      const note = document.createElement('span');
+      note.className = 'small muted';
+      note.textContent = 'возможно, виртуальный адаптер';
+      row.appendChild(note);
+    }
+    box.appendChild(row);
   }
 }
 
