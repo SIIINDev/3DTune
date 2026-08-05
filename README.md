@@ -116,6 +116,7 @@ reference/      конфиги стоковой и комьюнити-проши
 
 | Файл | Что внутри |
 |---|---|
+| [docs/BACKLOG.md](docs/BACKLOG.md) | **Всё запрошенное и его состояние**: что сделано, что отложено и почему, что заблокировано железом, в каком порядке делать дальше |
 | [docs/WINDOWS_QUICKSTART.md](docs/WINDOWS_QUICKSTART.md) | **Первый запуск на Windows:** Node, драйвер CH340, брандмауэр, подключение телефона и мака |
 | [docs/PHASE0_DISCOVERY.md](docs/PHASE0_DISCOVERY.md) | **Начать отсюда, когда дойдёт до железа.** Чек-лист разведки на живом принтере, ~20 минут |
 | [docs/HARDWARE_REGRESSION.md](docs/HARDWARE_REGRESSION.md) | Финальный личный прогон: безопасность, 3D Touch, EEPROM, LAN и SD-печать |
