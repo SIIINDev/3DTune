@@ -137,9 +137,16 @@ test('leveling advice states the firmware fact instead of blanket-recommending M
   assert.match(note.detail, /ENABLE_LEVELING_AFTER_G28/);
 });
 
-test('G29 L1 loads a stored mesh and is not counted as re-probing', () => {
+/* G29 L<slot> loads a stored mesh on the community UBL build (reference/kp5l-marlin-2.1.1-abl),
+   but on a BILINEAR or MBL build Marlin ignores the unknown argument and probes the whole bed.
+   The analyzer must not silently pick one of those readings. */
+test('a parameterised G29 is explained rather than judged, because the algorithm is compile-time', () => {
   const result = analyzeStartGcode('G28\nG29 L1', ctx);
   assert.equal(codes(result.findings).includes('probe_every_print'), false);
+  const note = pick(result.findings, 'probe_parameterised');
+  assert.equal(note.severity, 'info');
+  assert.match(note.detail, /UBL/);
+  assert.match(note.detail, /BILINEAR/);
 });
 
 test('probing before homing is critical', () => {
@@ -167,10 +174,30 @@ test('heating the hotend before the bed is reported as oozing', () => {
   assert.equal(codes(analyzeStartGcode('M190 S60\nM109 S205\nG28', ctx).findings).includes('heat_order'), false);
 });
 
-test('a block that moves without homing is flagged', () => {
-  const result = analyzeStartGcode('G1 X100 F3000', ctx);
+test('a start block that moves without homing is flagged', () => {
+  const result = analyzeStartGcode('M109 S205\nG1 X100 F3000', ctx);
   assert.equal(pick(result.findings, 'no_home').severity, 'warning');
   assert.equal(codes(analyzeStartGcode('M104 S205', ctx).findings).includes('no_home'), false);
+});
+
+test('an end block is not accused of failing to home — it cools down, it does not heat', () => {
+  const end = ['M104 S0', 'M140 S0', 'G91', 'G1 E-5 F1800', 'G1 Z10 F600', 'G90', 'G1 X0 Y300 F3000', 'M84'].join('\n');
+  const result = analyzeStartGcode(end, ctx);
+  assert.equal(codes(result.findings).includes('no_home'), false);
+  assert.equal(codes(result.findings).includes('cold_extrude'), false);
+  assert.equal(result.findings.filter((f) => f.severity !== 'info').length, 0);
+});
+
+test('an end block that overwrites calibration is still caught', () => {
+  const result = analyzeStartGcode('M104 S0\nM851 Z-1.9\nM500\nM84', ctx);
+  assert.equal(pick(result.findings, 'overwrites_calibration').severity, 'critical');
+  assert.equal(codes(result.findings).includes('no_home'), false);
+});
+
+test('probing without homing does not also raise the redundant no_home warning', () => {
+  const result = analyzeStartGcode('M109 S205\nG29\nG1 X10 F3000', ctx);
+  assert.equal(pick(result.findings, 'probe_without_home').severity, 'critical');
+  assert.equal(codes(result.findings).includes('no_home'), false);
 });
 
 test('driver current commands are useless on standalone TMC2225 and say so', () => {

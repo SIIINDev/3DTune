@@ -400,8 +400,31 @@ function checkFirmwareLimits(
 }
 
 function checkLeveling(commands: Command[], findings: StartGcodeFinding[]): void {
-  const probing = commands.filter((cmd) => cmd.code === 'G29' && cmd.params['L'] === undefined);
-  for (const cmd of probing) {
+  for (const cmd of commands) {
+    if (cmd.code !== 'G29') continue;
+
+    /* What G29's parameters mean depends on the levelling algorithm, and the algorithm is
+       compile-time. reference/kp5l-marlin-2.1.1-abl is UBL, where G29 L<slot> loads a stored mesh
+       and does not probe — but the same line on a BILINEAR or MBL build is an unknown argument
+       Marlin ignores, leaving a full probing run. Naming both beats guessing one. */
+    if (Object.keys(cmd.params).length > 0) {
+      findings.push({
+        code: 'probe_parameterised',
+        severity: 'info',
+        line: cmd.line,
+        source: cmd.source,
+        title: `${cmd.source} — смысл параметров зависит от прошивки`,
+        detail:
+          'Алгоритм левелинга компилируемый, по serial его не переключить. В комьюнити-сборке KP5L ' +
+          'включён UBL: там G29 L<слот> загружает сохранённую сетку без зондирования, а снимает её ' +
+          'G29 P1. На сборке с BILINEAR или MESH_BED_LEVELING такой параметр просто игнорируется, ' +
+          'и это полный прогон зонда на каждой печати.',
+        fix: 'Проверить, какой алгоритм в прошивке: отправить M503 и посмотреть, в каком виде ' +
+          'выводится сетка (UBL печатает номера слотов).',
+      });
+      continue;
+    }
+
     findings.push({
       code: 'probe_every_print',
       severity: 'warning',
@@ -453,7 +476,15 @@ function checkLeveling(commands: Command[], findings: StartGcodeFinding[]): void
 
 function checkHomingAndExtrusion(commands: Command[], findings: StartGcodeFinding[]): void {
   const hasMove = commands.some((cmd) => cmd.code === 'G0' || cmd.code === 'G1');
-  if (!commands.some((cmd) => cmd.code === 'G28') && hasMove) {
+  /* An end block also moves without homing, and correctly so. A start block always heats something;
+     an end block turns heat off. That is the cheap, reliable way to tell them apart. */
+  const heats = commands.some(
+    (cmd) =>
+      ['M104', 'M109', 'M140', 'M190'].includes(cmd.code) &&
+      ((cmd.params['S'] ?? cmd.params['R'] ?? 0) > 0 || cmd.placeholders.has('S') || cmd.placeholders.has('R')),
+  );
+  const probedWithoutHome = findings.some((f) => f.code === 'probe_without_home');
+  if (!commands.some((cmd) => cmd.code === 'G28') && hasMove && heats && !probedWithoutHome) {
     findings.push({
       code: 'no_home',
       severity: 'warning',

@@ -1562,7 +1562,7 @@ function renderSlicerAnalysis(result) {
 async function analyzeStartGcode() {
   const text = $('slicerInput').value;
   if (text.trim() === '') {
-    toast('Вставь стартовый блок из слайсера');
+    toast('Вставь стартовый или конечный блок из слайсера');
     return;
   }
   if (text.length > SLICER_MAX_CHARS) {
