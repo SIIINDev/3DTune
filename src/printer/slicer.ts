@@ -560,3 +560,161 @@ function checkPlaceholders(temps: Temperatures, findings: StartGcodeFinding[]): 
       'Сравнить их с пресетом можно только на готовом .gcode: вставь начало нарезанного файла.',
   });
 }
+
+/* ---------- what to hand back to the slicer ---------- */
+
+export type CuraSetting = {
+  field: string;
+  value: string;
+  /* Where the number came from: a firmware report, a host limit, or an assumption. Cura settings
+     are typed in by hand, so the user has to know which rows they can trust. */
+  source: 'M503' | 'host' | 'assumption';
+  note?: string;
+};
+
+export type CuraExport = {
+  rows: CuraSetting[];
+  missing: string[];
+};
+
+/* Cura's Machine Settings dialog, field by field. Values it plans with should not exceed what the
+   firmware will execute — otherwise the slicer's time estimate and its corner behaviour describe a
+   printer that does not exist. */
+export function curaMachineSettings(ctx: {
+  limits: MachineLimits;
+  settings?: Record<string, Record<string, number>> | undefined;
+}): CuraExport {
+  const s = ctx.settings ?? {};
+  const rows: CuraSetting[] = [
+    { field: 'X (width)', value: `${ctx.limits.bedSize.x}`, source: 'host' },
+    { field: 'Y (depth)', value: `${ctx.limits.bedSize.y}`, source: 'host' },
+    { field: 'Z (height)', value: `${ctx.limits.bedSize.z}`, source: 'host' },
+    { field: 'Build plate shape', value: 'Rectangular', source: 'host' },
+    { field: 'Origin at center', value: 'нет', source: 'host' },
+    { field: 'Heated bed', value: 'да', source: 'host' },
+    { field: 'G-code flavour', value: 'Marlin', source: 'host' },
+    { field: 'Number of extruders', value: '1', source: 'host' },
+    {
+      field: 'Nozzle size',
+      value: '0.4',
+      source: 'assumption',
+      note: 'диаметр сопла прошивка не знает — поставь свой, если он другой',
+    },
+  ];
+
+  const missing: string[] = [];
+  const add = (field: string, code: string, key: string, scale = 1): void => {
+    const value = s[code]?.[key];
+    if (value === undefined) {
+      missing.push(`${field} (${code} ${key})`);
+      return;
+    }
+    rows.push({ field, value: `${Math.round(value * scale * 100) / 100}`, source: 'M503' });
+  };
+
+  add('Maximum speed X', 'M203', 'X');
+  add('Maximum speed Y', 'M203', 'Y');
+  add('Maximum speed Z', 'M203', 'Z');
+  add('Maximum speed E', 'M203', 'E');
+  add('Maximum acceleration X', 'M201', 'X');
+  add('Maximum acceleration Y', 'M201', 'Y');
+  add('Maximum acceleration Z', 'M201', 'Z');
+  add('Maximum acceleration E', 'M201', 'E');
+  add('Print acceleration', 'M204', 'P');
+  add('Travel acceleration', 'M204', 'T');
+
+  /* Marlin builds run either classic jerk or junction deviation, never both. Reporting the one the
+     firmware actually uses avoids handing Cura a jerk value the printer ignores. */
+  const junction = s['M205']?.['J'];
+  if (junction !== undefined && junction > 0) {
+    rows.push({
+      field: 'Junction deviation',
+      value: `${junction}`,
+      source: 'M503',
+      note: 'прошивка использует junction deviation, а не классический jerk',
+    });
+  } else {
+    add('Maximum X jerk', 'M205', 'X');
+    add('Maximum Y jerk', 'M205', 'Y');
+    add('Maximum Z jerk', 'M205', 'Z');
+    add('Maximum E jerk', 'M205', 'E');
+  }
+
+  return { rows, missing };
+}
+
+export type StartBlockOptions = {
+  limits: MachineLimits;
+  hasProbe: boolean;
+  hasMesh: boolean;
+  levelingOn: boolean;
+};
+
+export type GeneratedBlock = {
+  start: string[];
+  end: string[];
+  notes: string[];
+};
+
+/* A start block that deliberately carries no material: temperatures stay as Cura placeholders so
+   the profile decides them. Hardcoding 205/60 here is exactly how "the PLA preset is selected but
+   it heats like PETG" happens in the other direction. */
+export function recommendedStartBlock(opts: StartBlockOptions): GeneratedBlock {
+  const primeY = Math.max(20, opts.limits.bedSize.y - 40);
+  const notes: string[] = [];
+
+  const start = [
+    ';--- 3DTune: стартовый блок ---',
+    'M140 S{material_bed_temperature_layer_0}   ; стол греется первым — он дольше',
+    'M104 S{material_print_temperature_layer_0} ; сопло греется параллельно, без ожидания',
+    'M190 S{material_bed_temperature_layer_0}   ; ждём стол',
+    'G28                                        ; парковка',
+  ];
+
+  if (opts.hasProbe && opts.hasMesh) {
+    start.push('M420 S1                                    ; включить сохранённую сетку');
+    notes.push(
+      'M420 S1 оставлен намеренно. На комьюнити-сборке KP5L включён ENABLE_LEVELING_AFTER_G28, ' +
+        'и строка там избыточна; на стоковой прошивке это не проверено, и там она может быть нужна. ' +
+        'Лишняя строка безвредна, отсутствующая — стоит первого слоя.',
+    );
+    notes.push('G29 в старт не добавлен: сетка уже снята и лежит в EEPROM. Пересниматься на каждой печати ей незачем.');
+  } else if (opts.hasProbe) {
+    start.push('; сетки в EEPROM нет — сними её в 3DTune и сохрани, потом добавь сюда M420 S1');
+    notes.push('Сетка не снята, поэтому строка включения компенсации не добавлена: включать нечего.');
+  } else {
+    notes.push('Прошивка не сообщает о зонде, поэтому строк компенсации стола в блоке нет.');
+  }
+  if (opts.hasMesh && !opts.levelingOn) {
+    notes.push('Сетка есть, но компенсация сейчас выключена. M420 S1 в старте включит её на время печати.');
+  }
+
+  start.push(
+    'M109 S{material_print_temperature_layer_0} ; ждём сопло — последним, чтобы меньше подтекало',
+    'G92 E0                                     ; обнулить экструдер',
+    `G1 X5 Y5 Z0.28 F3000                       ; к началу линии очистки`,
+    `G1 X5 Y${primeY} Z0.28 E${((primeY - 5) * 0.055).toFixed(1)} F1200   ; линия очистки вдоль левого края`,
+    'G92 E0',
+    'G1 X10 Z2 F3000                            ; отвести от линии',
+  );
+
+  const end = [
+    ';--- 3DTune: конечный блок ---',
+    'M104 S0',
+    'M140 S0',
+    'M107',
+    'G91',
+    'G1 E-3 F1800                               ; втянуть пруток',
+    'G1 Z10 F600                                ; поднять сопло над деталью',
+    'G90',
+    `G1 X0 Y${opts.limits.bedSize.y} F3000                       ; вывезти стол вперёд`,
+    'M84',
+  ];
+
+  notes.push(
+    'Ни одной команды калибровки: M92, M301, M304, M851, M500 и M502 в стартовом блоке быть не должно — ' +
+      'иначе профиль слайсера будет спорить с тем, что настроено в 3DTune.',
+  );
+
+  return { start, end, notes };
+}

@@ -89,6 +89,7 @@
     </div>
 
     <h3>Управление нагревом</h3>
+    <p class="note" id="limitsNote"></p>
     <div class="row">
       <label>Сопло °C <input id="hotendTarget" type="number" min="0" max="265" step="1" value="200"></label>
       <button data-set="hotend" class="primary">Нагрев</button>
@@ -394,6 +395,26 @@
       EEPROM эмулируется во flash MCU: 2 КБ, ресурс ~10&nbsp;000 циклов стирания.
       Меняй пачкой и жми «Сохранить» один раз — автосохранения здесь нет намеренно.
     </p>
+    <details class="firmware-only">
+      <summary>Чего здесь не будет никогда — и почему</summary>
+      <p>Marlin отдаёт по serial только то, что живёт в EEPROM. Ниже — параметры времени
+        компиляции: их не «забыли добавить», их физически нельзя изменить по USB. Меняются только
+        пересборкой прошивки и заливкой с SD-карты.</p>
+      <ul>
+        <li><b>Алгоритм левелинга</b> (BILINEAR / UBL / MBL) и <b>число точек сетки</b>
+          (<code>GRID_MAX_POINTS</code>) — <span id="firmwareMeshInfo">определяются прошивкой</span>.</li>
+        <li><b>Наличие зонда и его пин.</b> 3D&nbsp;Touch либо скомпилирован, либо нет; включить его
+          командой нельзя.</li>
+        <li><b>Токи драйверов</b> (<code>M906</code>/<code>M913</code>). На KP5L стоят TMC2225 в
+          standalone: ток задан подстроечным резистором на плате.</li>
+        <li><b>Потолки нагрева</b> (<code>HEATER_0_MAXTEMP</code>, <code>BED_MAXTEMP</code>) и
+          термозащита. Лимиты 3DTune — это отдельные, более низкие рабочие потолки хоста, а не
+          то, что разрешает прошивка.</li>
+        <li><b>Тип термистора, распиновка, кинематика, поведение тачскрина.</b></li>
+        <li><b>Emergency Parser, Input Shaping, Host Actions.</b> Приложение только сообщает,
+          включены ли они.</li>
+      </ul>
+    </details>
     <div id="pending" class="pending" hidden>
       <strong>Не применено</strong>
       <ul id="pendingList"></ul>
@@ -459,6 +480,39 @@
       aria-label="Стартовый или конечный G-code слайсера"
       placeholder="M140 S60&#10;M190 S60&#10;G28&#10;M109 S205&#10;G1 Z2.0 F3000"></textarea>
     <div id="slicerFindings" class="findings" aria-live="polite"></div>
+  </section>
+
+  <section class="card wide" data-section="slicer">
+    <h2>Что отдать слайсеру
+      <button id="handoffRefresh" class="ghost mini spacer">Пересобрать</button>
+    </h2>
+    <p class="note">
+      Обратная сторона разбора: не «что у тебя не так», а «что вписать, чтобы было так».
+      Значения берутся из фактического <code>M503</code> и текущего состояния принтера,
+      поэтому сначала подключись и прочитай настройки.
+    </p>
+
+    <h3>Cura → Machine Settings</h3>
+    <p class="note">
+      Слайсер планирует ускорения и скорости сам. Если его значения выше прошивочных, оценка
+      времени и поведение на углах описывают несуществующий принтер.
+    </p>
+    <div id="curaRows" class="handoff-rows"><span class="muted small">нет данных</span></div>
+    <p id="curaMissing" class="note" hidden></p>
+
+    <h3>Стартовый и конечный блок</h3>
+    <p class="note">
+      Температуры оставлены подстановками Cura намеренно: материал должен задавать профиль,
+      а не стартовый блок. Именно вшитая в старт температура и создаёт расхождение с пресетом.
+    </p>
+    <div class="row">
+      <button id="copyStartBlock" class="ghost mini">Копировать Start G-code</button>
+      <button id="copyEndBlock" class="ghost mini">Копировать End G-code</button>
+      <span id="handoffCopied" class="small muted" aria-live="polite"></span>
+    </div>
+    <pre id="startBlock" class="out" aria-label="Рекомендованный стартовый блок"></pre>
+    <pre id="endBlock" class="out" aria-label="Рекомендованный конечный блок"></pre>
+    <ul id="handoffNotes" class="handoff-notes"></ul>
   </section>
 
   <section class="card wide" data-section="terminal">

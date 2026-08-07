@@ -289,6 +289,9 @@ export function startServer(opts: ServerOptions): ServerHandle {
         return printer.analyzeStartGcode(text, presetId);
       }
 
+      case 'slicerHandoff':
+        return printer.slicerHandoff();
+
       case 'connect': {
         audit();
         const kind = String(p['kind'] ?? (opts.mock ? 'mock' : 'serial'));

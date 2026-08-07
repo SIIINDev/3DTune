@@ -1,6 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { analyzeStartGcode, type StartGcodeFinding } from '../src/printer/slicer.ts';
+import {
+  analyzeStartGcode,
+  curaMachineSettings,
+  recommendedStartBlock,
+  type StartGcodeFinding,
+} from '../src/printer/slicer.ts';
 import { KP5L_LIMITS } from '../src/printer/limits.ts';
 
 const ctx = { limits: KP5L_LIMITS };
@@ -256,4 +261,110 @@ test('a real Cura start block for KP5L is parsed end to end', () => {
   assert.equal(found.includes('cold_extrude'), false);
   assert.equal(found.includes('overwrites_calibration'), false);
   assert.equal(result.findings.some((f) => f.severity === 'critical'), false);
+});
+
+/* ---------- what to hand back to the slicer ---------- */
+
+test('the Cura export carries firmware values and labels what is only an assumption', () => {
+  const settings = {
+    M203: { X: 500, Y: 500, Z: 10, E: 25 },
+    M201: { X: 500, Y: 500, Z: 100, E: 5000 },
+    M204: { P: 500, R: 1000, T: 500 },
+    M205: { B: 20000, S: 0, T: 0, X: 8, Y: 8, Z: 0.4, E: 5, J: 0 },
+  };
+  const { rows, missing } = curaMachineSettings({ limits: KP5L_LIMITS, settings });
+  assert.deepEqual(missing, []);
+
+  const byField = new Map(rows.map((r) => [r.field, r]));
+  assert.equal(byField.get('X (width)')?.value, '300');
+  assert.equal(byField.get('Z (height)')?.value, '330');
+  assert.equal(byField.get('Maximum speed X')?.value, '500');
+  assert.equal(byField.get('Maximum speed X')?.source, 'M503');
+  assert.equal(byField.get('Print acceleration')?.value, '500');
+  assert.equal(byField.get('Travel acceleration')?.value, '500');
+
+  // Nozzle diameter is nowhere in the firmware, and the row has to admit it.
+  assert.equal(byField.get('Nozzle size')?.source, 'assumption');
+});
+
+/* Marlin runs classic jerk or junction deviation, never both. Handing Cura a jerk the firmware
+   ignores would make the slicer plan corners the printer does not take. */
+test('the export reports junction deviation instead of jerk when the firmware uses it', () => {
+  const withJd = curaMachineSettings({
+    limits: KP5L_LIMITS,
+    settings: { M205: { X: 8, Y: 8, Z: 0.4, E: 5, J: 0.08 } },
+  });
+  const fields = withJd.rows.map((r) => r.field);
+  assert.ok(fields.includes('Junction deviation'));
+  assert.equal(fields.includes('Maximum X jerk'), false);
+
+  const withJerk = curaMachineSettings({
+    limits: KP5L_LIMITS,
+    settings: { M205: { X: 8, Y: 8, Z: 0.4, E: 5, J: 0 } },
+  });
+  assert.ok(withJerk.rows.map((r) => r.field).includes('Maximum X jerk'));
+});
+
+test('an unread M503 is listed as missing, not filled with defaults', () => {
+  const { rows, missing } = curaMachineSettings({ limits: KP5L_LIMITS });
+  assert.ok(missing.length > 0);
+  assert.ok(missing.some((m) => m.includes('M203')));
+  assert.equal(rows.some((r) => r.source === 'M503'), false);
+  // The geometry rows do not depend on M503 and must still be there.
+  assert.ok(rows.some((r) => r.field === 'X (width)'));
+});
+
+test('the generated start block carries no material and no calibration commands', () => {
+  const { start, end } = recommendedStartBlock({
+    limits: KP5L_LIMITS,
+    hasProbe: true,
+    hasMesh: true,
+    levelingOn: true,
+  });
+  const text = start.join('\n');
+
+  // Temperatures stay as slicer placeholders — a hardcoded 205 here is the same bug in reverse.
+  assert.match(text, /M109 S\{material_print_temperature_layer_0\}/);
+  assert.match(text, /M190 S\{material_bed_temperature_layer_0\}/);
+  assert.equal(/M10[49] S\d/.test(text), false);
+
+  for (const forbidden of ['M92', 'M301', 'M304', 'M851', 'M500', 'M502']) {
+    assert.equal(text.includes(forbidden), false, `${forbidden} must never appear in a start block`);
+  }
+
+  // Heat order: bed waits before the hotend does.
+  assert.ok(start.findIndex((l) => l.startsWith('M190')) < start.findIndex((l) => l.startsWith('M109')));
+  // Homing precedes any move.
+  assert.ok(start.findIndex((l) => l.startsWith('G28')) < start.findIndex((l) => l.startsWith('G1')));
+
+  assert.ok(end.join('\n').includes('M104 S0'));
+});
+
+test('the generated block adapts to what the printer actually has', () => {
+  const withMesh = recommendedStartBlock({ limits: KP5L_LIMITS, hasProbe: true, hasMesh: true, levelingOn: true });
+  assert.ok(withMesh.start.some((l) => l.startsWith('M420 S1')));
+  assert.ok(withMesh.notes.some((n) => n.includes('ENABLE_LEVELING_AFTER_G28')));
+
+  const noMesh = recommendedStartBlock({ limits: KP5L_LIMITS, hasProbe: true, hasMesh: false, levelingOn: false });
+  assert.equal(noMesh.start.some((l) => l.startsWith('M420 S1')), false);
+
+  const noProbe = recommendedStartBlock({ limits: KP5L_LIMITS, hasProbe: false, hasMesh: false, levelingOn: false });
+  assert.equal(noProbe.start.some((l) => l.includes('M420')), false);
+  assert.ok(noProbe.notes.some((n) => n.includes('зонде')));
+});
+
+/* The generator and the analyzer have to agree: a block 3DTune produces must survive the check
+   3DTune performs on it, or one of the two is lying. */
+test('a generated block passes the analyzer with nothing worse than info', () => {
+  const { start, end } = recommendedStartBlock({
+    limits: KP5L_LIMITS,
+    hasProbe: true,
+    hasMesh: true,
+    levelingOn: true,
+  });
+  for (const block of [start, end]) {
+    const result = analyzeStartGcode(block.join('\n'), ctx);
+    const bad = result.findings.filter((f) => f.severity !== 'info');
+    assert.deepEqual(bad.map((f) => f.code), [], `generated block must analyse clean: ${bad.map((f) => f.title).join('; ')}`);
+  }
 });

@@ -259,6 +259,7 @@ function applyState(s) {
     // Do not fight the user mid-edit: the field only follows the printer while it is not focused.
     if (fade !== undefined && document.activeElement !== $('fadeHeight')) $('fadeHeight').value = fade;
   });
+  safe('firmwareOnly', () => renderFirmwareOnly(s));
   safe('settings', () => renderSettings(s.settings));
   safe('probe', () => renderProbe(s));
   safe('esteps', () => renderESteps(s));
@@ -266,6 +267,25 @@ function applyState(s) {
     const bedButton = document.querySelector('#pidTarget button[data-target="bed"]');
     if (bedButton) bedButton.disabled = connected && s.settings.M304 === undefined;
   });
+}
+
+/* S7/S11: the temperature ceilings are a host-side assumption about this machine, deliberately
+   below the firmware's kill points, and Marlin reports neither over serial. Saying so where the
+   user types a target is the difference between a limit they can reason about and one that looks
+   arbitrary. */
+function renderFirmwareOnly(s) {
+  const limits = s.limits;
+  if (limits) {
+    $('limitsNote').textContent =
+      `Потолки 3DTune: сопло ${limits.hotendMax} °C, стол ${limits.bedMax} °C; выше ` +
+      `${limits.confirmAboveHotend} °C нужно подтверждение. Это рабочие пределы хоста, а не пределы ` +
+      'прошивки — Marlin их по serial не сообщает. Меняются в ~/.3dtune/config.json.';
+  }
+
+  const mesh = s.leveling?.mesh;
+  $('firmwareMeshInfo').textContent = mesh?.length
+    ? `сейчас ${mesh[0]?.length ?? 0}×${mesh.length} точек`
+    : 'определяются прошивкой';
 }
 
 function safe(what, fn) {
@@ -1567,6 +1587,7 @@ async function loadPlan() {
     renderCommissioning();
     renderPresets();
     renderSlicerPresets();
+    void loadHandoff();
   } catch {
     /* the wizard is optional chrome; a failure here must not break control */
   }
@@ -1697,6 +1718,71 @@ try {
 } catch {
   /* storage is a convenience here, not a dependency */
 }
+
+
+/* ---------- what to hand back to the slicer ---------- */
+
+const SOURCE_LABEL = { M503: 'из прошивки', host: 'из профиля машины', assumption: 'допущение' };
+
+function renderHandoff(result) {
+  const rowsHost = $('curaRows');
+  rowsHost.replaceChildren();
+  for (const row of result.cura.rows) {
+    const line = document.createElement('div');
+    line.className = 'handoff-row';
+    line.dataset.source = row.source;
+    const field = document.createElement('span');
+    field.className = 'handoff-field';
+    field.textContent = row.field;
+    const value = document.createElement('b');
+    value.textContent = row.value;
+    const source = document.createElement('span');
+    source.className = 'small muted';
+    source.textContent = row.note ? `${SOURCE_LABEL[row.source]} · ${row.note}` : SOURCE_LABEL[row.source];
+    line.append(field, value, source);
+    rowsHost.appendChild(line);
+  }
+
+  const missing = $('curaMissing');
+  missing.hidden = result.cura.missing.length === 0;
+  missing.textContent = result.cura.missing.length
+    ? `Прошивка не сообщила: ${result.cura.missing.join(', ')}. Прочитай M503 на подключённом принтере.`
+    : '';
+
+  $('startBlock').textContent = result.block.start.join('\n');
+  $('endBlock').textContent = result.block.end.join('\n');
+  const notes = $('handoffNotes');
+  notes.replaceChildren();
+  for (const note of result.block.notes) {
+    const li = document.createElement('li');
+    li.textContent = note;
+    notes.appendChild(li);
+  }
+}
+
+async function loadHandoff() {
+  try {
+    renderHandoff(await rpc('slicerHandoff'));
+  } catch {
+    /* the handoff is a read-only derivation; failing to build it must not break control */
+  }
+}
+
+async function copyBlock(id, label) {
+  const text = $(id).textContent;
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    $('handoffCopied').textContent = `${label} скопирован`;
+  } catch {
+    // Clipboard access needs a secure context; over plain http on the LAN it is simply absent.
+    $('handoffCopied').textContent = 'браузер не дал доступ к буферу — выдели текст и скопируй руками';
+  }
+}
+
+$('handoffRefresh').onclick = () => void loadHandoff();
+$('copyStartBlock').onclick = () => void copyBlock('startBlock', 'Start G-code');
+$('copyEndBlock').onclick = () => void copyBlock('endBlock', 'End G-code');
 
 
 /* ---------- pairing ---------- */

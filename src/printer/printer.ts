@@ -16,7 +16,14 @@ import {
 } from './limits.ts';
 import { analyzeMesh, MeshCollector, screwAdviceFromPoints, type MeshAnalysis, type ScrewAdvice, type ScrewCorner } from './mesh.ts';
 import { presetById, stepById, type CommissioningStep, type FilamentPreset } from './commissioning.ts';
-import { analyzeStartGcode, type StartGcodeAnalysis } from './slicer.ts';
+import {
+  analyzeStartGcode,
+  curaMachineSettings,
+  recommendedStartBlock,
+  type CuraExport,
+  type GeneratedBlock,
+  type StartGcodeAnalysis,
+} from './slicer.ts';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -735,6 +742,21 @@ export class Printer extends EventEmitter {
       settings: Object.keys(this.settings).length > 0 ? this.settings : undefined,
       presetId,
     });
+  }
+
+  /* What to type into Cura's Machine Settings, and a start/end block that matches this machine's
+     actual state. Both are read-only derivations, so they work disconnected too — with whatever
+     M503 data the last connection left behind. */
+  slicerHandoff(): { cura: CuraExport; block: GeneratedBlock } {
+    return {
+      cura: curaMachineSettings({ limits: this.limits, settings: this.settings }),
+      block: recommendedStartBlock({
+        limits: this.limits,
+        hasProbe: this.caps['Z_PROBE'] !== false,
+        hasMesh: this.mesh !== null && this.mesh.length > 0,
+        levelingOn: this.levelingOn,
+      }),
+    };
   }
 
   async probeAction(action: 'deploy' | 'stow' | 'selftest'): Promise<CommandResult> {

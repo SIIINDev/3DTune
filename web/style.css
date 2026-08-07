@@ -1462,3 +1462,87 @@ canvas {
   font-size: 13px;
   color: var(--ink-2);
 }
+
+/* ---------- firmware-only disclosure ---------- */
+
+.firmware-only {
+  border: 1px dashed var(--hair);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  margin-bottom: 10px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  max-width: 92ch;
+}
+.firmware-only summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+}
+.firmware-only summary:focus-visible {
+  outline: 2px solid var(--s-bed);
+  outline-offset: 2px;
+}
+.firmware-only p {
+  margin: 8px 0;
+}
+.firmware-only ul {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 5px;
+}
+
+/* ---------- slicer handoff ---------- */
+
+.handoff-rows {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 10px;
+  max-width: 92ch;
+}
+.handoff-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr);
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 13px;
+}
+.handoff-row:nth-child(odd) {
+  background: var(--raised);
+}
+.handoff-row b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+.handoff-row[data-source="assumption"] b {
+  color: var(--st-warn);
+}
+.handoff-field {
+  color: var(--ink-2);
+}
+.handoff-notes {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--ink-2);
+  max-width: 92ch;
+}
+@media (max-width: 560px) {
+  .handoff-row {
+    grid-template-columns: 1fr auto;
+  }
+  .handoff-row .small {
+    grid-column: 1 / -1;
+  }
+}

@@ -10,6 +10,10 @@ structure on every session.
 cat ~/.claude/graph/$(basename "$PWD").json
 ```
 
+If that file does not exist on your machine, this whole section does not apply
+to you — it is a per-developer cache, not part of the repository. Ignore it and
+work normally.
+
 ### What is inside
 
 | Key | Meaning |
