@@ -845,15 +845,17 @@ canvas {
 }
 .set-fields {
   display: grid;
-  /* auto-fill, not auto-fit: on a wide card an empty track must stay empty rather than stretching
-     three numeric inputs across the whole viewport. */
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(104px, 1fr));
   gap: 7px;
-  max-width: 720px;
 }
 .set-field {
   display: grid;
   gap: 3px;
+  /* Capped per field, not on the container: a max-width on .set-fields raises its min-content
+     contribution as a grid item of .settings, and an eight-field group like M205 then demands
+     ~570px and overflows a 375px viewport. Here it only stops three numeric inputs from stretching
+     across a full-width card. */
+  max-width: 200px;
 }
 .set-field span {
   font-size: 11px;
