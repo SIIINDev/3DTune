@@ -29,6 +29,11 @@ export type ServerHandle = {
 
 type Client = { id: number; ws: WebSocket; label: string; ip: string; heatTokens: number };
 
+/* A start block is tens of lines. The cap keeps the RPC frame well under the socket's 64 KB
+   maxPayload, so a whole sliced .gcode pasted into the field gets an explanation instead of
+   silently dropping the client's connection. */
+const START_GCODE_MAX_CHARS = 32 * 1024;
+
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -270,6 +275,18 @@ export function startServer(opts: ServerOptions): ServerHandle {
         audit(`${presetId}${p['firstLayer'] ? ' (первый слой)' : ''}`);
         spendHeatToken(client);
         return printer.applyFilamentPreset(presetId, Boolean(p['firstLayer']));
+      }
+
+      case 'analyzeStartGcode': {
+        const text = String(p['text'] ?? '');
+        if (text.length > START_GCODE_MAX_CHARS) {
+          throw new SafetyError(
+            'too_long',
+            `слишком большой блок (${text.length} символов). Нужно только начало файла — до первого слоя`,
+          );
+        }
+        const presetId = p['presetId'] ? String(p['presetId']) : undefined;
+        return printer.analyzeStartGcode(text, presetId);
       }
 
       case 'connect': {

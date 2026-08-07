@@ -399,6 +399,33 @@
     <div id="filamentPresets" class="presets"></div>
   </section>
 
+  <section class="card wide" id="cardSlicer">
+    <h2>Разбор стартового G-code слайсера
+      <span id="slicerVerdict" class="small muted spacer"></span>
+    </h2>
+    <p class="note">
+      Пресет в 3DTune — это предварительный нагрев. Печатью управляет файл: <code>M104</code>/<code>M109</code>
+      из стартового блока перебивают его молча. Вставь сюда свой Start G-code из слайсера — или первые
+      строки нарезанного <code>.gcode</code>, если в блоке стоят подстановки — и приложение скажет,
+      что там затирает калибровку и под какой пластик этот профиль на самом деле.
+      Разбор работает без подключения к принтеру; сравнение с лимитами прошивки требует
+      прочитанного <code>M503</code>.
+    </p>
+    <div class="row">
+      <label>Материал в 3DTune
+        <select id="slicerPreset" aria-label="Материал, выбранный в 3DTune">
+          <option value="">не сравнивать</option>
+        </select>
+      </label>
+      <button id="slicerAnalyze" class="primary">Разобрать</button>
+      <button id="slicerClear" class="ghost mini">Очистить</button>
+    </div>
+    <textarea id="slicerInput" class="gcode-input" rows="10" spellcheck="false" autocomplete="off"
+      aria-label="Стартовый G-code слайсера"
+      placeholder="M140 S60&#10;M190 S60&#10;G28&#10;M109 S205&#10;G1 Z2.0 F3000"></textarea>
+    <div id="slicerFindings" class="findings" aria-live="polite"></div>
+  </section>
+
   <section class="card wide">
     <h2>Терминал</h2>
     <pre id="term" class="term" aria-label="Журнал обмена с принтером"></pre>

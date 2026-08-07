@@ -1465,9 +1465,136 @@ async function loadPlan() {
     plan = await rpc('commissioningPlan');
     renderCommissioning();
     renderPresets();
+    renderSlicerPresets();
   } catch {
     /* the wizard is optional chrome; a failure here must not break control */
   }
+}
+
+
+/* ---------- slicer start G-code ---------- */
+
+const SLICER_MAX_CHARS = 32 * 1024;
+const SLICER_STORAGE = '3dtune.startGcode';
+const SEVERITY_ICON = { critical: '✕', warning: '⚠', info: 'i' };
+
+function renderSlicerPresets() {
+  if (!plan) return;
+  const select = $('slicerPreset');
+  const previous = select.value;
+  select.replaceChildren();
+  const none = document.createElement('option');
+  none.value = '';
+  none.textContent = 'не сравнивать';
+  select.appendChild(none);
+  for (const preset of plan.presets) {
+    const option = document.createElement('option');
+    option.value = preset.id;
+    option.textContent = `${preset.name} (${preset.hotend}° / ${preset.bed}°)`;
+    select.appendChild(option);
+  }
+  select.value = previous;
+}
+
+function renderSlicerAnalysis(result) {
+  const host = $('slicerFindings');
+  const verdict = $('slicerVerdict');
+  host.replaceChildren();
+
+  const critical = result.findings.filter((f) => f.severity === 'critical').length;
+  const warnings = result.findings.filter((f) => f.severity === 'warning').length;
+  const parts = [`${result.commandCount} команд`];
+  if (critical) parts.push(`${critical} критично`);
+  if (warnings) parts.push(`${warnings} предупреждений`);
+  if (!critical && !warnings) parts.push('ничего опасного не найдено');
+  verdict.textContent = parts.join(' · ');
+
+  if (result.commandCount === 0) {
+    host.appendChild(banner('warning', '⚠', 'В блоке нет ни одной команды G-code.'));
+    return;
+  }
+
+  const summary = document.createElement('p');
+  summary.className = 'note';
+  const temps = [];
+  if (result.temperatures.hotend !== undefined) temps.push(`сопло ${result.temperatures.hotend} °C`);
+  if (result.temperatures.bed !== undefined) temps.push(`стол ${result.temperatures.bed} °C`);
+  summary.textContent = temps.length
+    ? `Файл греет ${temps.join(', ')}.` + (result.material ? ` Ближайший пресет — ${result.material.name}.` : '')
+    : 'Температуры в блоке не заданы числами.';
+  host.appendChild(summary);
+
+  /* No separate "limits unknown" banner here: the analyzer already emits that as a finding, and
+     only when the block actually contains M201/M203/M204/M205 for it to be about. */
+  for (const finding of result.findings) {
+    const item = document.createElement('div');
+    item.className = 'finding';
+    item.dataset.level = finding.severity;
+
+    const head = document.createElement('div');
+    head.className = 'finding-head';
+    const icon = document.createElement('span');
+    icon.className = 'banner-icon';
+    icon.textContent = SEVERITY_ICON[finding.severity] ?? 'i';
+    const title = document.createElement('b');
+    title.textContent = finding.title;
+    head.append(icon, title);
+    if (finding.line > 0) {
+      const where = document.createElement('code');
+      where.className = 'finding-line';
+      where.textContent = `строка ${finding.line}: ${finding.source}`;
+      head.appendChild(where);
+    }
+
+    const detail = document.createElement('div');
+    detail.className = 'finding-detail';
+    detail.textContent = finding.detail;
+
+    item.append(head, detail);
+    if (finding.fix) {
+      const fix = block('fix', 'Что сделать', finding.fix);
+      item.appendChild(fix);
+    }
+    host.appendChild(item);
+  }
+}
+
+async function analyzeStartGcode() {
+  const text = $('slicerInput').value;
+  if (text.trim() === '') {
+    toast('Вставь стартовый блок из слайсера');
+    return;
+  }
+  if (text.length > SLICER_MAX_CHARS) {
+    toast(`Слишком много текста (${text.length} символов). Нужно только начало файла — до первого слоя.`);
+    return;
+  }
+  try {
+    localStorage.setItem(SLICER_STORAGE, text);
+  } catch {
+    /* private mode or a full quota must not block the analysis itself */
+  }
+  const presetId = $('slicerPreset').value;
+  const result = await call('analyzeStartGcode', presetId ? { text, presetId } : { text });
+  renderSlicerAnalysis(result);
+}
+
+$('slicerAnalyze').onclick = () => void analyzeStartGcode();
+$('slicerClear').onclick = () => {
+  $('slicerInput').value = '';
+  $('slicerFindings').replaceChildren();
+  $('slicerVerdict').textContent = '';
+  try {
+    localStorage.removeItem(SLICER_STORAGE);
+  } catch {
+    /* nothing to clean up if storage is unavailable */
+  }
+};
+
+try {
+  $('slicerInput').value = localStorage.getItem(SLICER_STORAGE) ?? '';
+} catch {
+  /* storage is a convenience here, not a dependency */
 }
 
 

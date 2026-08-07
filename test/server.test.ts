@@ -347,3 +347,25 @@ test('pairing is refused when no code has been issued', async () => {
   assert.equal(res.status, 403);
   assert.match(String(res.body['error']), /код не запрошен|неверный код|слишком много/);
 });
+
+test('the start G-code analyzer answers over RPC and refuses a whole sliced file', async () => {
+  const client = await connect();
+  await client.hello;
+
+  const result = (await client.rpc('analyzeStartGcode', {
+    text: 'M140 S80\nM190 S80\nG28\nM109 S240\nM500',
+    presetId: 'pla',
+  })) as { findings: { code: string; severity: string }[]; material: { id: string } | null };
+  assert.equal(result.material?.id, 'petg');
+  const codes = result.findings.map((f) => f.code);
+  assert.ok(codes.includes('material_mismatch'));
+  assert.ok(codes.includes('writes_eeprom'));
+
+  /* Between the analyzer's cap and the socket's 64 KB maxPayload: the server must answer with an
+     explanation rather than the frame being dropped. Bigger than that and the client-side check
+     in web/app.js is what stops it, before anything is sent. */
+  const oversized = 'G1 X1 Y1\n'.repeat(4_600);
+  assert.ok(oversized.length > 32 * 1024 && oversized.length < 60 * 1024);
+  await assert.rejects(client.rpc('analyzeStartGcode', { text: oversized }), /too_long/);
+  client.close();
+});

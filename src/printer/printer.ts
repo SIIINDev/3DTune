@@ -16,6 +16,7 @@ import {
 } from './limits.ts';
 import { analyzeMesh, MeshCollector, screwAdviceFromPoints, type MeshAnalysis, type ScrewAdvice, type ScrewCorner } from './mesh.ts';
 import { presetById, stepById, type CommissioningStep, type FilamentPreset } from './commissioning.ts';
+import { analyzeStartGcode, type StartGcodeAnalysis } from './slicer.ts';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
@@ -720,6 +721,17 @@ export class Printer extends EventEmitter {
     for (const cmd of validated) results.push(await link.send(cmd));
     await this.refreshSettings();
     return results;
+  }
+
+  /* Deliberately usable while disconnected: pasting a slicer start block is something you do before
+     the USB cable is anywhere near the machine. Without an M503 read the firmware-limit comparison
+     reports itself as unavailable instead of guessing. */
+  analyzeStartGcode(text: string, presetId?: string): StartGcodeAnalysis {
+    return analyzeStartGcode(text, {
+      limits: this.limits,
+      settings: Object.keys(this.settings).length > 0 ? this.settings : undefined,
+      presetId,
+    });
   }
 
   async probeAction(action: 'deploy' | 'stow' | 'selftest'): Promise<CommandResult> {
