@@ -55,6 +55,7 @@ let edits = {};
 let probeEdits = {};
 let babystepSum = 0;
 let meshMode = 'raw';
+let wasConnected = false;
 
 /* ---------- theme ---------- */
 
@@ -218,6 +219,14 @@ function applyState(s) {
   const connected = c.status === 'connected';
   $('connect').disabled = connected || c.status === 'connecting';
   $('disconnect').disabled = !connected;
+
+  /* The handoff is built from M503, which only exists after a connection. Opening the page before
+     plugging the printer in is the normal first-run order, so rebuild it on the transition instead
+     of leaving a "firmware did not report" card and a button the user has to know to press. */
+  if (connected !== wasConnected) {
+    wasConnected = connected;
+    if (connected) void loadHandoff();
+  }
 
   renderHeater('hotend', s.temps.hotend);
   renderHeater('bed', s.temps.bed);
