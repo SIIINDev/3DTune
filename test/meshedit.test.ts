@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { Printer } from '../src/printer/printer.ts';
+import { MockTransport } from '../src/transport/mock.ts';
+import { waitFor } from './support.ts';
 
 /* Fade height and single-point mesh edits: the two Phase-3 promises that were still missing from
    the host. Both go through the printer rather than the raw terminal, so both are validated. */
@@ -93,6 +95,91 @@ test('a mesh Z far beyond any real bed shape is refused before it reaches the no
     await printer.runBedLeveling(true);
     await assert.rejects(() => printer.editMeshPoint(0, 0, 12), /±5/);
     await assert.rejects(() => printer.editMeshPoint(0, 0, Number.NaN), /±5/);
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+/* ---------- live preset watch ---------- */
+
+/* The reported symptom, in its live form: the preset is chosen in 3DTune, then the file being
+   printed sets its own temperatures and wins. The host cannot forbid that, only notice it. */
+test('the preset watch stays quiet while the printer agrees with the chosen preset', async () => {
+  const printer = await connected();
+  try {
+    assert.equal(printer.snapshot().presetWatch, null);
+
+    await printer.applyFilamentPreset('pla', false);
+    const watch = printer.snapshot().presetWatch;
+    assert.equal(watch?.presetId, 'pla');
+    assert.deepEqual(watch?.expected, { hotend: 205, bed: 60 });
+    assert.equal(watch?.mismatch, null);
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+test('a file that heats like PETG under a PLA preset raises a mismatch', async () => {
+  /* Written straight into the transport, below the host: that is what an SD print's start block
+     looks like from here — targets the host never asked for, arriving in the temperature report. */
+  const transport = new MockTransport();
+  const printer = new Printer();
+  await printer.connect({ kind: 'injected', transport });
+  try {
+    await printer.applyFilamentPreset('pla', false);
+    transport.write('M104 S240\n');
+    transport.write('M140 S80\n');
+
+    await waitFor(
+      () => printer.snapshot().presetWatch?.mismatch !== null,
+      'the live targets to be reported back and compared against the preset',
+    );
+    const watch = printer.snapshot().presetWatch;
+    assert.equal(watch?.presetId, 'pla');
+    assert.deepEqual(watch?.mismatch?.actual, { hotend: 240, bed: 80 });
+    assert.equal(watch?.mismatch?.likely?.id, 'petg');
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+test('setting a temperature by hand disarms the watch instead of warning about your own action', async () => {
+  const printer = await connected();
+  try {
+    await printer.applyFilamentPreset('pla', false);
+    await printer.setHotendTarget(240, true);
+    assert.equal(printer.snapshot().presetWatch, null);
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+test('cooling down is the end of a job, not a disagreement', async () => {
+  const transport = new MockTransport();
+  const printer = new Printer();
+  await printer.connect({ kind: 'injected', transport });
+  try {
+    await printer.applyFilamentPreset('pla', false);
+    transport.write('M104 S0\n');
+    transport.write('M140 S0\n');
+
+    await waitFor(
+      () => printer.snapshot().temps.hotend.target === 0 && printer.snapshot().temps.bed.target === 0,
+      'both targets to reach zero',
+    );
+    assert.equal(printer.snapshot().presetWatch?.mismatch, null);
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+test('first-layer temperatures are what the watch compares against when that box is ticked', async () => {
+  const printer = await connected();
+  try {
+    await printer.applyFilamentPreset('petg', true);
+    const watch = printer.snapshot().presetWatch;
+    assert.deepEqual(watch?.expected, { hotend: 240, bed: 80 });
+    assert.equal(watch?.mismatch, null);
   } finally {
     await printer.disconnect();
   }

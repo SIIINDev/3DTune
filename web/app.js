@@ -363,6 +363,21 @@ function renderBanners(s) {
       ),
     );
   }
+  const watch = s.presetWatch;
+  if (watch?.mismatch) {
+    const { expected, presetName } = watch;
+    const { actual, likely } = watch.mismatch;
+    const guess = likely && likely.id !== watch.presetId ? ` Похоже на ${likely.name}.` : '';
+    box.appendChild(
+      banner(
+        'warning',
+        '⚠',
+        `В 3DTune выбран ${presetName} (${expected.hotend}°/${expected.bed}°), а принтер греется до ` +
+          `${actual.hotend}°/${actual.bed}°.${guess} Температуру задал не хост — скорее всего стартовый блок ` +
+          'печатаемого файла. Тот ли это файл?',
+      ),
+    );
+  }
   for (const text of s.warnings ?? []) {
     box.appendChild(banner('warning', '⚠', text));
   }

@@ -87,7 +87,7 @@ export function analyzeStartGcode(text: string, ctx: StartGcodeContext): StartGc
   const findings: StartGcodeFinding[] = [];
 
   const temps = collectTemperatures(commands);
-  const material = guessMaterial(temps.hotend, temps.bed);
+  const material = guessFilament(temps.hotend, temps.bed);
 
   checkCalibrationWrites(commands, findings);
   checkTemperatureLimits(commands, ctx.limits, findings);
@@ -172,7 +172,9 @@ function collectTemperatures(commands: Command[]): Temperatures {
   return out;
 }
 
-function guessMaterial(hotend?: number, bed?: number): MaterialGuess | null {
+/* Nearest filament preset by temperature. Shared with the live preset watch, so "this looks like
+   PETG" means the same thing whether it was read out of a file or off the live targets. */
+export function guessFilament(hotend?: number, bed?: number): MaterialGuess | null {
   if (hotend === undefined) return null;
   let best: MaterialGuess | null = null;
   for (const preset of FILAMENT_PRESETS) {

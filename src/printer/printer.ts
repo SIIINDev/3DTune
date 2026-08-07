@@ -20,8 +20,10 @@ import {
   analyzeStartGcode,
   curaMachineSettings,
   recommendedStartBlock,
+  guessFilament,
   type CuraExport,
   type GeneratedBlock,
+  type MaterialGuess,
   type StartGcodeAnalysis,
 } from './slicer.ts';
 
@@ -55,6 +57,17 @@ export type PrinterStateSnapshot = {
      client render, because the card must say which source the numbers came from: grid-interpolated
      and directly probed advice deserve different amounts of trust, and a stale label misleads. */
   screwMeasurement: { at: number; points: { corner: ScrewCorner; x: number; y: number; z: number }[]; advice: ScrewAdvice[] } | null;
+  /* Live comparison of what the printer is actually heating to against the preset chosen in
+     3DTune. null when no preset is armed; mismatch stays null while they agree. */
+  presetWatch: {
+    presetId: string;
+    presetName: string;
+    expected: { hotend: number; bed: number };
+    mismatch: {
+      actual: { hotend: number; bed: number };
+      likely: MaterialGuess | null;
+    } | null;
+  } | null;
   busy: string | null;
   halted: boolean;
   fan: number;
@@ -104,6 +117,10 @@ const HANDSHAKE_ATTEMPTS = 3;
 /* A mesh cell further than this from nozzle height is not a bed shape, it is a typo. Marlin would
    happily accept it and drive the nozzle into the plate. */
 const MESH_POINT_LIMIT_MM = 5;
+/* How far live targets may drift from the chosen preset before it stops being rounding. The bed
+   band is tighter because bed temperatures sit closer together across materials than hotend ones. */
+const PRESET_DRIFT_HOTEND_C = 10;
+const PRESET_DRIFT_BED_C = 8;
 const SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M420', 'M851', 'M900']);
 const EDITABLE_SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M851', 'M900']);
 /* Which leading letter carries a tool/hotend index on each M503 report line, per Marlin's own
@@ -199,6 +216,11 @@ export class Printer extends EventEmitter {
   private persistedSettings: Record<string, Record<string, number>> | null = null;
   private persistedMesh: number[][] | null = null;
   private persistedLevelingOn = false;
+  /* The last filament preset chosen in 3DTune, kept so live targets can be compared against it.
+     Cleared the moment the user sets a temperature by hand — then they already know what they
+     asked for, and a warning would be noise. */
+  private activePreset: FilamentPreset | null = null;
+  private activePresetFirstLayer = false;
   private saveVerification: { at: number; verified: boolean; mismatches: string[] } | null = null;
   private lastTarget: ConnectTarget | null = null;
   private reconnectTimer?: NodeJS.Timeout;
@@ -233,6 +255,7 @@ export class Printer extends EventEmitter {
       probing: this.probing ? { ...this.probing } : null,
       zOffsetWizard: this.zWizard ? { ...this.zWizard, centre: { ...this.zWizard.centre } } : null,
       screwMeasurement: this.screwMeasurement ? structuredClone(this.screwMeasurement) : null,
+      presetWatch: this.presetWatch(),
       leveling: {
         on: this.levelingOn,
         mesh: this.mesh,
@@ -283,7 +306,10 @@ export class Printer extends EventEmitter {
     }
     this.clearReconnect();
     this.manualDisconnect = false;
-    this.lastTarget = structuredClone(target);
+    /* An injected transport is a live object with listeners attached; structuredClone either throws
+       on it or quietly returns something that is no longer a transport. Only the serialisable
+       targets get copied — the injected one is kept by reference. */
+    this.lastTarget = target.kind === 'injected' ? target : structuredClone(target);
     this.resetVolatile();
     this.status = 'connecting';
     this.connError = null;
@@ -567,6 +593,7 @@ export class Printer extends EventEmitter {
   }
 
   async setHotendTarget(value: number, confirmed = false): Promise<void> {
+    this.activePreset = null;
     checkHotendTarget(value, this.limits, confirmed);
     await this.requireLink().send(`M104 S${value}`);
     this.hotend.target = value;
@@ -574,6 +601,7 @@ export class Printer extends EventEmitter {
   }
 
   async setBedTarget(value: number): Promise<void> {
+    this.activePreset = null;
     checkBedTarget(value, this.limits);
     await this.requireLink().send(`M140 S${value}`);
     this.bed.target = value;
@@ -1019,8 +1047,41 @@ export class Printer extends EventEmitter {
     await this.setHotendTarget(hotend, true);
     await this.setBedTarget(bed);
     await this.setFan(Math.round((Math.min(100, Math.max(0, preset.fan)) / 100) * 255));
+    // The setters above clear the watch on every manual change; re-arm it after they have run.
+    this.activePreset = preset;
+    this.activePresetFirstLayer = firstLayer;
     this.sys(`filament preset ${preset.name}: сопло ${hotend}C, стол ${bed}C, обдув ${preset.fan}%`);
+    this.emitState();
     return preset;
+  }
+
+  /* The preset in 3DTune is a preheat; the file being printed sets its own M104/M109 and wins.
+     The host cannot forbid that, but it can notice: if the live targets stop matching the preset
+     the user chose, something else — almost always the start block of an SD print — set them. */
+  private presetWatch(): PrinterStateSnapshot['presetWatch'] {
+    const preset = this.activePreset;
+    if (!preset) return null;
+    const expected = {
+      hotend: this.activePresetFirstLayer ? preset.firstLayerHotend : preset.hotend,
+      bed: this.activePresetFirstLayer ? preset.firstLayerBed : preset.bed,
+    };
+    const base = { presetId: preset.id, presetName: preset.name, expected };
+
+    // Cooling down is not a disagreement, it is the end of a job.
+    if (this.hotend.target <= 0 && this.bed.target <= 0) return { ...base, mismatch: null };
+
+    const hotendOff = this.hotend.target - expected.hotend;
+    const bedOff = this.bed.target - expected.bed;
+    if (Math.abs(hotendOff) < PRESET_DRIFT_HOTEND_C && Math.abs(bedOff) < PRESET_DRIFT_BED_C) {
+      return { ...base, mismatch: null };
+    }
+    return {
+      ...base,
+      mismatch: {
+        actual: { hotend: this.hotend.target, bed: this.bed.target },
+        likely: guessFilament(this.hotend.target, this.bed.target),
+      },
+    };
   }
 
   async setLeveling(on: boolean): Promise<CommandResult> {
