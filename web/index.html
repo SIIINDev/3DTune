@@ -38,7 +38,16 @@
 
 <div id="banners" class="banners"></div>
 
-<div class="filters">
+<nav class="tabs" id="tabs" role="group" aria-label="Разделы">
+  <button data-section="overview" aria-pressed="true">Обзор</button>
+  <button data-section="bed">Стол и зонд</button>
+  <button data-section="calibration">Калибровки</button>
+  <button data-section="setup">Настройка с нуля</button>
+  <button data-section="slicer">Слайсер</button>
+  <button data-section="terminal">Терминал</button>
+</nav>
+
+<div class="filters" data-section="overview">
   <span class="filters-label">История температур</span>
   <div class="seg" id="rangeSel" role="group" aria-label="Диапазон истории">
     <button data-range="60000" aria-pressed="false">1 мин</button>
@@ -50,7 +59,7 @@
 
 <main>
 
-  <section class="card wide">
+  <section class="card wide" data-section="overview">
     <h2>Температуры</h2>
     <div class="tiles">
       <div class="tile">
@@ -100,7 +109,7 @@
     </div>
   </section>
 
-  <section class="card" id="cardPairing">
+  <section class="card" id="cardPairing" data-section="overview">
     <h2>Подключить устройство</h2>
     <p class="note">
       Чтобы управлять с телефона, мака или другого ПК — открой на нём адрес из списка и введи код.
@@ -114,7 +123,7 @@
     <div id="pairUrls" class="pair-urls"></div>
   </section>
 
-  <section class="card">
+  <section class="card" data-section="overview">
     <h2>Подключение</h2>
     <div class="row">
       <select id="portSelect" aria-label="Последовательный порт"></select>
@@ -134,7 +143,7 @@
     </dl>
   </section>
 
-  <section class="card">
+  <section class="card" data-section="overview">
     <h2>Движение</h2>
     <div class="row">
       <span class="muted small">шаг, мм</span>
@@ -175,12 +184,12 @@
     </dl>
   </section>
 
-  <section class="card">
+  <section class="card" data-section="overview">
     <h2>Эндстопы <button id="readEndstops" class="ghost mini spacer">M119</button></h2>
     <div id="endstops" class="chips"><span class="muted small">нет данных</span></div>
   </section>
 
-  <section class="card" id="cardESteps">
+  <section class="card" id="cardESteps" data-section="calibration">
     <h2>Калибровка E-steps</h2>
     <p class="note">
       Нагрей сопло, отмерь филамент и подай известную длину. Введи, сколько миллиметров
@@ -213,7 +222,7 @@
     </p>
   </section>
 
-  <section class="card" id="cardProbe">
+  <section class="card" id="cardProbe" data-section="bed">
     <h2>Зонд и сетка стола</h2>
     <p id="probeUnavailable" class="note" hidden>
       Прошивка не сообщает о поддержке зонда (<code>Cap:Z_PROBE</code>). Включение 3D&nbsp;Touch —
@@ -298,6 +307,19 @@
           <button data-mode="curvature" aria-pressed="false">Кривизна</button>
         </div>
       </div>
+      <div class="row">
+        <label>Fade height, мм
+          <input id="fadeHeight" type="number" min="0" max="330" step="0.5" value="10">
+        </label>
+        <button id="applyFadeHeight" class="ghost mini">Применить M420 Z</button>
+        <span id="fadeHeightState" class="small muted"></span>
+      </div>
+      <p class="note">
+        Выше этой высоты компенсация плавно сходит на нет: низ детали повторяет стол, верх остаётся
+        прямым по осям машины. <code>0</code> — компенсировать на всей высоте.
+        Требует <code>ENABLE_LEVELING_FADE_HEIGHT</code> в прошивке; если параметра нет, Marlin
+        молча проигнорирует команду — поэтому значение перечитывается и сверяется.
+      </p>
       <dl id="meshStats" class="mesh-stats" hidden>
         <div><dt>Общий разброс</dt><dd id="meshRange">—</dd></div>
         <div><dt>Наклон X</dt><dd id="meshTiltX">—</dd></div>
@@ -318,6 +340,19 @@
         </div>
       </div>
       <div id="mesh" class="mesh"><span class="muted small">нет данных — выполни G29</span></div>
+      <div id="meshEdit" class="mesh-edit" hidden>
+        <span class="small muted">Точка <b id="meshEditPoint">—</b>, сейчас <b id="meshEditCurrent">—</b> мм</span>
+        <label>новое Z, мм
+          <input id="meshEditZ" type="number" step="0.01" min="-5" max="5" aria-label="Новое значение Z для выбранной точки">
+        </label>
+        <button id="meshEditApply" class="primary mini">Записать M421</button>
+        <button id="meshEditCancel" class="ghost mini">Отмена</button>
+      </div>
+      <p class="note">
+        Клик по клетке сетки правит одну точку через <code>M421</code> — для случайного промаха
+        зонда или подгонки первого слоя над одним углом. Правка живёт в памяти принтера, пока не
+        нажат <code>M500</code>.
+      </p>
       <div id="meshScale" class="scale" hidden>
         <span id="meshMin">—</span>
         <span class="scale-bar" aria-hidden="true"></span>
@@ -331,7 +366,7 @@
     </div>
   </section>
 
-  <section class="card" id="cardPid">
+  <section class="card" id="cardPid" data-section="calibration">
     <h2>PID автотюн</h2>
     <div class="row">
       <div class="seg" id="pidTarget" role="group" aria-label="Цель автотюна">
@@ -351,7 +386,7 @@
     <pre id="pidOut" class="out" aria-label="Вывод автотюна"></pre>
   </section>
 
-  <section class="card wide">
+  <section class="card wide" data-section="calibration">
     <h2>Настройки прошивки
       <button id="readSettings" class="ghost mini spacer">Прочитать M503</button>
     </h2>
@@ -371,7 +406,7 @@
     <div id="settings" class="settings"><span class="muted small">нет данных</span></div>
   </section>
 
-  <section class="card wide" id="cardCommissioning">
+  <section class="card wide" id="cardCommissioning" data-section="setup">
     <h2>Настройка с нуля
       <span id="commissioningProgress" class="small muted spacer"></span>
     </h2>
@@ -387,7 +422,7 @@
     <div id="commissioningStages"></div>
   </section>
 
-  <section class="card">
+  <section class="card" data-section="overview">
     <h2>Пресеты пластика</h2>
     <p class="note">
       Кнопка выставляет температуры и обдув через те же проверки, что и ручной нагрев.
@@ -399,7 +434,7 @@
     <div id="filamentPresets" class="presets"></div>
   </section>
 
-  <section class="card wide" id="cardSlicer">
+  <section class="card wide" id="cardSlicer" data-section="slicer">
     <h2>Разбор G-code слайсера
       <span id="slicerVerdict" class="small muted spacer"></span>
     </h2>
@@ -426,7 +461,7 @@
     <div id="slicerFindings" class="findings" aria-live="polite"></div>
   </section>
 
-  <section class="card wide">
+  <section class="card wide" data-section="terminal">
     <h2>Терминал</h2>
     <pre id="term" class="term" aria-label="Журнал обмена с принтером"></pre>
     <form id="termForm" class="row">

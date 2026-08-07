@@ -74,6 +74,8 @@ export class MarlinSim extends EventEmitter {
   private homed = { x: false, y: false, z: false };
   private fan = 0;
   private levelingOn = false;
+  /* DEFAULT_LEVELING_FADE_HEIGHT in the community KP5L config (Configuration.h:1916). */
+  private fadeHeight = 10;
   private meshValid = false;
   private mesh: number[][] = [];
   private settings = new Map<string, Record<string, number>>();
@@ -353,6 +355,7 @@ export class MarlinSim extends EventEmitter {
 
       case 'M420':
         if (args['S'] !== undefined) this.levelingOn = args['S'] === 1 && this.meshValid;
+        if (args['Z'] !== undefined) this.fadeHeight = args['Z'];
         if (upper.includes('V')) this.printMesh();
         this.out(`echo:Bed Leveling ${this.levelingOn ? 'ON' : 'OFF'}`);
         break;
@@ -374,6 +377,7 @@ export class MarlinSim extends EventEmitter {
           mesh: this.mesh,
           meshValid: this.meshValid,
           levelingOn: this.levelingOn,
+          fadeHeight: this.fadeHeight,
         });
         this.out('echo:Settings Stored (656 bytes; crc 41276)');
         break;
@@ -385,11 +389,13 @@ export class MarlinSim extends EventEmitter {
             mesh: number[][];
             meshValid: boolean;
             levelingOn: boolean;
+            fadeHeight?: number;
           };
           this.settings = new Map(saved.settings);
           this.mesh = saved.mesh;
           this.meshValid = saved.meshValid;
           this.levelingOn = saved.levelingOn;
+          this.fadeHeight = saved.fadeHeight ?? this.fadeHeight;
         }
         this.out('echo:Stored settings retrieved');
         break;
@@ -614,7 +620,7 @@ export class MarlinSim extends EventEmitter {
     this.out('echo:; Home offset:');
     this.out(fmt('M206', ['X', 'Y', 'Z']));
     this.out('echo:; Auto Bed Leveling:');
-    this.out(`echo:  M420 S${this.levelingOn ? 1 : 0} Z0.00`);
+    this.out(`echo:  M420 S${this.levelingOn ? 1 : 0} Z${this.fadeHeight.toFixed(2)}`);
     this.out('echo:; Hotend PID:');
     this.out(fmt('M301', ['P', 'I', 'D']));
     if (!this.opts.noBedPid) {

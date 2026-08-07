@@ -255,6 +255,9 @@ function applyState(s) {
   });
   safe('leveling', () => {
     $('levelingState').textContent = s.leveling.on ? 'компенсация включена' : 'компенсация выключена';
+    const fade = s.settings?.M420?.Z;
+    // Do not fight the user mid-edit: the field only follows the printer while it is not focused.
+    if (fade !== undefined && document.activeElement !== $('fadeHeight')) $('fadeHeight').value = fade;
   });
   safe('settings', () => renderSettings(s.settings));
   safe('probe', () => renderProbe(s));
@@ -563,9 +566,13 @@ function renderMesh(leveling) {
   const flat = shown.flat();
   const maxAbs = Math.max(0.005, ...flat.map(Math.abs));
 
+  /* Only raw heights are editable: a curvature cell is a residual after subtracting the best-fit
+     plane, and M421 writes absolute mesh values. Writing a residual would corrupt the mesh. */
+  const editable = meshMode === 'raw';
   [...shown].reverse().forEach((row, ri) => {
     const div = document.createElement('div');
     div.className = 'mesh-row';
+    const j = shown.length - 1 - ri;
     row.forEach((v, ci) => {
       const cell = document.createElement('div');
       cell.className = 'mesh-cell';
@@ -574,11 +581,25 @@ function renderMesh(leveling) {
       cell.style.background = `color-mix(in oklab, ${pole} ${(k * 100).toFixed(1)}%, var(--div-mid))`;
       if (k > 0.5) cell.dataset.pole = 'true';
       cell.textContent = v.toFixed(3);
-      cell.title = `точка ${ci + 1}, ряд ${shown.length - ri}: ${v.toFixed(3)} мм`;
+      cell.title = `точка ${ci + 1}, ряд ${j + 1}: ${v.toFixed(3)} мм`;
+      if (editable) {
+        cell.dataset.editable = 'true';
+        cell.tabIndex = 0;
+        cell.setAttribute('role', 'button');
+        cell.setAttribute('aria-label', `Точка ${ci + 1}, ряд ${j + 1}: ${v.toFixed(3)} мм. Изменить`);
+        const pick = () => openMeshEdit(ci, j, v);
+        cell.onclick = pick;
+        cell.onkeydown = (event) => {
+          if (event.key !== 'Enter' && event.key !== ' ') return;
+          event.preventDefault();
+          pick();
+        };
+      }
       div.appendChild(cell);
     });
     box.appendChild(div);
   });
+  if (!editable) closeMeshEdit();
 
   scale.hidden = false;
   $('meshMin').textContent = `${(-maxAbs).toFixed(3)}`;
@@ -602,6 +623,49 @@ function renderMesh(leveling) {
 function signed(value) {
   return `${value >= 0 ? '+' : ''}${value.toFixed(3)} мм`;
 }
+
+let meshEditTarget = null;
+
+function openMeshEdit(i, j, value) {
+  meshEditTarget = { i, j };
+  $('meshEditPoint').textContent = `${i + 1}, ряд ${j + 1}`;
+  $('meshEditCurrent').textContent = value.toFixed(3);
+  $('meshEditZ').value = value.toFixed(3);
+  $('meshEdit').hidden = false;
+  $('meshEditZ').focus();
+  $('meshEditZ').select();
+}
+
+function closeMeshEdit() {
+  meshEditTarget = null;
+  $('meshEdit').hidden = true;
+}
+
+$('meshEditCancel').onclick = closeMeshEdit;
+$('meshEditApply').onclick = async () => {
+  if (!meshEditTarget) return;
+  const z = numeric($('meshEditZ').value);
+  if (!Number.isFinite(z)) {
+    toast('Введи число');
+    return;
+  }
+  const { i, j } = meshEditTarget;
+  await call('editMeshPoint', { i, j, z }, `точка ${i + 1},${j + 1} записана — не забудь M500`);
+  closeMeshEdit();
+};
+
+$('applyFadeHeight').onclick = async () => {
+  const mm = numeric($('fadeHeight').value);
+  const result = await call('setFadeHeight', { mm });
+  const state = $('fadeHeightState');
+  if (result.reported === null) {
+    state.textContent = 'принтер не вернул M420 Z — прочитай M503';
+  } else if (Math.abs(result.reported - result.requested) > 0.01) {
+    state.textContent = `принтер оставил ${result.reported} мм — похоже, ENABLE_LEVELING_FADE_HEIGHT выключен`;
+  } else {
+    state.textContent = `подтверждено: ${result.reported} мм`;
+  }
+};
 
 function renderProbe(s) {
   const hasProbe = s.connection.caps.Z_PROBE !== false;
@@ -790,6 +854,43 @@ function segment(id, onPick) {
     };
   });
 }
+
+/* ---------- sections ---------- */
+
+/* The page is one long document by design — every card keeps its id, its handlers and its place in
+   the DOM. The tabs only toggle `hidden`, which [hidden]{display:none!important} also removes from
+   the tab order, so nothing has to be re-rendered or re-wired when the section changes. */
+const SECTION_STORAGE = '3dtune.section';
+
+function showSection(name) {
+  const known = [...$('tabs').querySelectorAll('button')].map((b) => b.dataset.section);
+  const target = known.includes(name) ? name : 'overview';
+  for (const btn of $('tabs').querySelectorAll('button')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.section === target));
+  }
+  for (const el of document.querySelectorAll('[data-section]')) {
+    if (el.parentElement?.id === 'tabs') continue;
+    el.hidden = el.dataset.section !== target;
+  }
+  try {
+    localStorage.setItem(SECTION_STORAGE, target);
+  } catch {
+    /* remembering the last section is a nicety, not a requirement */
+  }
+  window.scrollTo({ top: 0 });
+}
+
+for (const btn of $('tabs').querySelectorAll('button')) {
+  btn.onclick = () => showSection(btn.dataset.section);
+}
+
+let startSection = 'overview';
+try {
+  startSection = localStorage.getItem(SECTION_STORAGE) ?? 'overview';
+} catch {
+  /* private mode: start on the overview */
+}
+showSection(startSection);
 
 segment('rangeSel', (btn) => chart.setWindow(Number(btn.dataset.range)));
 segment('stepSel', (btn) => {

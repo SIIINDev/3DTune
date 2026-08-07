@@ -351,6 +351,20 @@ export function startServer(opts: ServerOptions): ServerHandle {
         audit(Boolean(p['on']) ? 'on' : 'off');
         return printer.setLeveling(Boolean(p['on']));
 
+      case 'setFadeHeight': {
+        const mm = Number(p['mm']);
+        audit(`M420 Z${mm}`);
+        return printer.setFadeHeight(mm);
+      }
+
+      case 'editMeshPoint': {
+        const i = Number(p['i']);
+        const j = Number(p['j']);
+        const z = Number(p['z']);
+        audit(`M421 I${i} J${j} Z${z}`);
+        return printer.editMeshPoint(i, j, z);
+      }
+
       case 'estop':
         audit();
         printer.estop();

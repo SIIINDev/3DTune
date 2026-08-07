@@ -94,6 +94,9 @@ const TEMP_HISTORY = 1800;
 const LOG_HISTORY = 600;
 const STATE_THROTTLE_MS = 120;
 const HANDSHAKE_ATTEMPTS = 3;
+/* A mesh cell further than this from nozzle height is not a bed shape, it is a typo. Marlin would
+   happily accept it and drive the nozzle into the plate. */
+const MESH_POINT_LIMIT_MM = 5;
 const SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M420', 'M851', 'M900']);
 const EDITABLE_SETTING_CODES = new Set(['M92', 'M201', 'M203', 'M204', 'M205', 'M206', 'M301', 'M304', 'M851', 'M900']);
 /* Which leading letter carries a tool/hotend index on each M503 report line, per Marlin's own
@@ -1002,6 +1005,47 @@ export class Printer extends EventEmitter {
     const result = await this.requireLink().send(`M420 S${on ? 1 : 0}`);
     await this.refreshSettings();
     return result;
+  }
+
+  /* Fade height: above it the mesh correction is gradually dropped, so the top of a tall print is
+     square to the machine instead of following a warped bed. 0 disables fading — the correction
+     then applies at every Z. Only exists when ENABLE_LEVELING_FADE_HEIGHT was compiled in; when it
+     was not, Marlin silently ignores the Z parameter, which is why the value is read back. */
+  async setFadeHeight(mm: number): Promise<{ requested: number; reported: number | null }> {
+    if (!Number.isFinite(mm) || mm < 0) throw new SafetyError('bad_value', 'fade height must be >= 0');
+    if (mm > this.limits.bedSize.z) {
+      throw new SafetyError('bad_value', `fade height ${mm} mm is above the Z travel ${this.limits.bedSize.z} mm`);
+    }
+    const value = Math.round(mm * 100) / 100;
+    await this.requireLink().send(`M420 Z${value}`);
+    await this.refreshSettings();
+    const reported = this.settings['M420']?.['Z'];
+    return { requested: value, reported: reported === undefined ? null : reported };
+  }
+
+  /* Point edit: raise or lower one mesh cell without re-probing the whole bed. Useful for a single
+     bad reading (a speck of debris under the probe) and for hand-tuning the first layer over one
+     corner. Marlin answers M421 with a bare ok, so the mesh is re-read rather than patched
+     client-side — an optimistic local edit would diverge the moment the firmware rejected it. */
+  async editMeshPoint(i: number, j: number, z: number): Promise<{ mesh: number[][] | null }> {
+    const rows = this.mesh?.length ?? 0;
+    const columns = this.mesh?.[0]?.length ?? 0;
+    if (rows === 0 || columns === 0) {
+      throw new SafetyError('no_mesh', 'сетки нет — сними её через G29, потом правь точки');
+    }
+    if (!Number.isInteger(i) || !Number.isInteger(j) || i < 0 || j < 0 || i >= columns || j >= rows) {
+      throw new SafetyError('bad_value', `точка ${i},${j} вне сетки ${columns}×${rows}`);
+    }
+    if (!Number.isFinite(z) || Math.abs(z) > MESH_POINT_LIMIT_MM) {
+      throw new SafetyError('bad_value', `Z точки ограничен ±${MESH_POINT_LIMIT_MM} мм`);
+    }
+    const link = this.requireLink();
+    await link.send(`M421 I${i} J${j} Z${Math.round(z * 1000) / 1000}`);
+    this.mesh = null;
+    this.meshCollector.reset();
+    await link.send('M420 V1', { timeoutMs: 20_000 });
+    this.emitState();
+    return { mesh: this.mesh };
   }
 
   async saveToEeprom(): Promise<SaveVerification> {
