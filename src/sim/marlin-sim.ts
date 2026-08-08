@@ -67,8 +67,14 @@ export class MarlinSim extends EventEmitter {
   private probeCount = 0;
   private pendingQueue: string[] = [];
 
-  private hotend: Heater = { current: 21.4, target: 0, power: 0, ambient: 21.4, rate: 4.0, loss: 0.055 };
-  private bed: Heater = { current: 21.8, target: 0, power: 0, ambient: 21.8, rate: 0.95, loss: 0.02 };
+  /* The model settles where heating balances loss: ambient + rate/loss. That ceiling has to sit
+     above anything the host will ever ask for, or the simulator silently caps out — with loss 0.055
+     the hotend asymptote was 94 °C, so nothing that needs a hot nozzle (E-steps, the 170 °C
+     cold-extrude gate, any preset above PLA) could be exercised against the mock at all.
+     Now ~329 °C for the hotend and ~127 °C for the bed, both clear of the host's 265/110 caps,
+     with climb rates that stay in the right order of magnitude for this machine. */
+  private hotend: Heater = { current: 21.4, target: 0, power: 0, ambient: 21.4, rate: 4.0, loss: 0.013 };
+  private bed: Heater = { current: 21.8, target: 0, power: 0, ambient: 21.8, rate: 0.95, loss: 0.009 };
 
   private pos = { x: 0, y: 0, z: 0, e: 0 };
   private homed = { x: false, y: false, z: false };

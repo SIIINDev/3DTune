@@ -1122,8 +1122,16 @@ async function runBedConfiguration(mode) {
     }
     const failed = (report.steps ?? []).filter((step) => !step.ok);
     if (failed.length === 0) {
-      status.textContent = 'готово: сетка снята, компенсация включена, записано в EEPROM';
-      toast('Стол сконфигурирован и сохранён в принтере', 'good');
+      /* The measure-only pass deliberately leaves compensation off and skips M500. Saying otherwise
+         in the headline contradicts the step list right below it, and would have the user believe
+         the mesh is live and persisted when neither is true. */
+      if (mode === 'measureOnly') {
+        status.textContent = 'готово: сетка снята. Компенсация выключена, в EEPROM не записано — так и задумано';
+        toast('Сетка снята. Компенсация не включалась, в EEPROM не писалось', 'good');
+      } else {
+        status.textContent = 'готово: сетка снята, компенсация включена, записано в EEPROM';
+        toast('Стол сконфигурирован и сохранён в принтере', 'good');
+      }
     } else {
       status.textContent = `${failed.length} шаг(ов) не прошли — смотри список`;
       toast(`Конфигурация неполная: ${failed[0].name} — ${failed[0].detail}`);

@@ -184,3 +184,29 @@ test('first-layer temperatures are what the watch compares against when that box
     await printer.disconnect();
   }
 });
+
+/* A commissioning step that heats is 3DTune asking, not the file. Warning about it would offer a
+   confident and wrong explanation — "probably the start block of the printed file". */
+test('a commissioning step that heats disarms the watch, like any other host-set temperature', async () => {
+  const printer = await connected();
+  try {
+    await printer.applyFilamentPreset('pla', false);
+    assert.equal(printer.snapshot().presetWatch?.presetId, 'pla');
+
+    await printer.runCommissioningStep('extr-nozzle-hot-tighten', true);
+    assert.equal(printer.snapshot().presetWatch, null);
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+test('a commissioning step that does not heat leaves the watch armed', async () => {
+  const printer = await connected();
+  try {
+    await printer.applyFilamentPreset('pla', false);
+    await printer.runCommissioningStep('sens-endstops', true);
+    assert.equal(printer.snapshot().presetWatch?.presetId, 'pla');
+  } finally {
+    await printer.disconnect();
+  }
+});

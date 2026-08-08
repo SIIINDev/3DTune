@@ -1016,6 +1016,11 @@ export class Printer extends EventEmitter {
     const link = this.requireLink();
     const run: CommissioningRun = { stepId: id, commands: [] };
 
+    /* Same rule as the manual setters: a temperature 3DTune itself asked for is not a surprise.
+       Without this, running "tighten the nozzle hot" at 230 under a PLA preset raises a banner
+       blaming the start block of a printed file — a confident, wrong explanation. */
+    if (step.gcode.some((c) => /^M(?:10[49]|140|190)\b/i.test(c.trim()))) this.activePreset = null;
+
     for (const raw of step.gcode) {
       const command = raw.trim();
       if (!COMMISSIONING_COMMAND.test(command)) {
@@ -1215,6 +1220,13 @@ export class Printer extends EventEmitter {
     if (parts.length === 0) throw new SafetyError('bad_value', 'no probe offset values given');
     const res = await this.requireLink().send(`M851 ${parts.join(' ')}`);
     await this.refreshSettings();
+
+    /* Writing Z IS the wizard's outcome, so the wizard is over. Leaving it armed leaves "restore the
+       previous offset" on screen next to an offset the user just committed — and pressing it would
+       undo a value that is already verified in EEPROM, which is exactly the failure this feature
+       exists to prevent. */
+    if (offset.z !== undefined) this.finishZOffsetWizard();
+
     if (!persist) return { ...res, persisted: null };
 
     /* A Z-offset that vanishes on power-off is worse than none: the first layer looks right during

@@ -198,3 +198,39 @@ test('an incomplete screw measurement produces no advice at all', async () => {
     await printer.disconnect();
   }
 });
+
+/* Committing the offset IS the wizard's outcome. If the wizard stays armed afterwards, the UI keeps
+   offering "restore the previous offset" next to a value that is already verified in EEPROM, and
+   pressing it silently undoes the calibration this whole feature exists to make permanent. */
+test('committing an offset ends the Z-offset wizard instead of leaving an undo button armed', async () => {
+  const printer = new Printer();
+  await printer.connect({ kind: 'mock' });
+  try {
+    await printer.setProbeOffset({ z: -1.4 }, false);
+    await printer.startZOffsetWizard(true);
+    assert.equal(printer.snapshot().zOffsetWizard?.active, true);
+
+    await printer.setProbeOffset({ z: -1.85 }, false);
+    assert.equal(printer.snapshot().zOffsetWizard, null, 'the wizard must close once Z is written');
+    assert.equal(printer.snapshot().settings['M851']?.['Z'], -1.85);
+
+    // With the wizard closed there is nothing left to cancel, so the committed value cannot be lost.
+    await assert.rejects(() => printer.cancelZOffsetWizard(), /мастер|wizard/i);
+    assert.equal(printer.snapshot().settings['M851']?.['Z'], -1.85);
+  } finally {
+    await printer.disconnect();
+  }
+});
+
+test('an X or Y offset edit does not close a running Z-offset wizard', async () => {
+  const printer = new Printer();
+  await printer.connect({ kind: 'mock' });
+  try {
+    await printer.startZOffsetWizard(true);
+    await printer.setProbeOffset({ x: 27, y: -6 }, false);
+    assert.equal(printer.snapshot().zOffsetWizard?.active, true);
+  } finally {
+    await printer.finishZOffsetWizard();
+    await printer.disconnect();
+  }
+});

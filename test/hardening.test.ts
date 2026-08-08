@@ -441,3 +441,35 @@ test('a second hotend PID line does not overwrite the first', async () => {
     await printer.disconnect();
   }
 });
+
+/* The simulator settles where heating balances loss — ambient + rate/loss. If that ceiling sits
+   below what the host can ask for, the mock silently caps out and every feature needing a hot
+   nozzle becomes untestable without saying so. It shipped at 94 °C for the hotend once. */
+test('the simulator can reach every temperature the host is allowed to command', async () => {
+  const printer = new Printer();
+  await printer.connect({ kind: 'mock' });
+  try {
+    const { hotendMax, bedMax } = printer.limits;
+    await printer.setHotendTarget(hotendMax, true);
+    await printer.setBedTarget(bedMax);
+
+    /* Waiting for the real climb would take minutes, so measure the slope near the cap instead:
+       while the model is still gaining there, the ceiling is above it. */
+    const climbing = async (read: () => number) => {
+      const before = read();
+      await waitFor(() => read() > before, 'the simulated heater to gain temperature', 8_000);
+    };
+    await climbing(() => printer.snapshot().temps.hotend.current);
+    await climbing(() => printer.snapshot().temps.bed.current);
+
+    const hotend = printer.snapshot().temps.hotend;
+    const bed = printer.snapshot().temps.bed;
+    assert.equal(hotend.power > 0, true, 'the hotend must still be driven at the host cap');
+    assert.equal(bed.power > 0, true, 'the bed must still be driven at the host cap');
+    assert.equal(hotend.current < hotendMax, true, 'sanity: it has not arrived yet');
+  } finally {
+    await printer.setHotendTarget(0);
+    await printer.setBedTarget(0);
+    await printer.disconnect();
+  }
+});
