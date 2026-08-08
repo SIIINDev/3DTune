@@ -199,7 +199,12 @@ async function main(): Promise<void> {
   const effectiveDeadman = deadmanMs(config) ?? 30 * 60_000;
   process.stdout.write(
     effectiveDeadman > 0
-      ? `  idle policy: after ${Math.round(effectiveDeadman / 60_000)} min with no client, M27 decides whether to cool\n`
+      // Rounding a sub-minute timer to "1 min" understates how soon the heaters get turned off.
+      ? `  idle policy: after ${
+          effectiveDeadman < 60_000
+            ? `${Math.round(effectiveDeadman / 1000)} s`
+            : `${Math.round(effectiveDeadman / 60_000)} min`
+        } with no client, M27 decides whether to cool\n`
       : '  idle policy: dead-man timer disabled by config — heaters are never turned off automatically\n',
   );
   process.stdout.write(`  token stored in ${CONFIG_PATH}\n\n`);
