@@ -1,0 +1,3 @@
+fcfc4cdeb5d9cb05753bab9653e86d29308fd830a8cf58feaae5a69b3ca1e499  3dtune-0.1.0-darwin-arm64.zip
+9523ebe14713ba22f62dae03ea06df6e57551a60e555bb21b2e136fee219b665  3dtune-0.1.0-darwin-x64.zip
+6d5069283e15a8dda24c7767e9a8a65f1fc6ecd247d207cc8433d1053dfddf59  3dtune-0.1.0-win-x64.zip

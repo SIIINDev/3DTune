@@ -16,6 +16,18 @@
 
 ## Запуск
 
+### Скачать готовую сборку
+
+| Платформа | Файл |
+|---|---|
+| Windows 10/11 (x64) | [3dtune-0.1.0-win-x64.zip](releases/3dtune-0.1.0-win-x64.zip) |
+| Mac на Apple Silicon | [3dtune-0.1.0-darwin-arm64.zip](releases/3dtune-0.1.0-darwin-arm64.zip) |
+| Mac на Intel | [3dtune-0.1.0-darwin-x64.zip](releases/3dtune-0.1.0-darwin-x64.zip) |
+
+По 0.6–0.7 МБ. Распаковать и запустить лаунчер. Нужен установленный
+[Node.js 24+](https://nodejs.org) — единственная зависимость, лаунчер сам её проверит.
+Подробности, контрольные суммы и что именно проверено — в [releases/README.md](releases/README.md).
+
 ### Windows и macOS в один клик
 
 Двойной клик по **`Запустить-3DTune.bat`** (Windows) или **`Запустить-3DTune.command`** (macOS).
